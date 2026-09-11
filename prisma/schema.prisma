@@ -40,6 +40,8 @@ model RoutePoint {
 
   route         Route          @relation(fields: [routeId], references: [id])
   servicePoints ServicePoint[]
+  
+  @@unique([routeId, sequence])
 }
 
 model ServicePoint {

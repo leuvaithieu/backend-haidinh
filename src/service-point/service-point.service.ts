@@ -18,4 +18,12 @@ export class ServicePointService{
             data,
         })
     }
+
+    async remove(id:string){
+        return this.prisma.servicePoint.delete({
+            where:{
+                id
+            }
+        })
+    }
 }

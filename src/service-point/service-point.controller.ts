@@ -1,4 +1,4 @@
-import { Body,Controller, Get, Post } from "@nestjs/common";
+import { Body,Controller, Get, Post,Delete,Param } from "@nestjs/common";
 import { ServicePointService } from "./service-point.service";
 import { CreateServicePointDto } from "./dto/create-service-point.dto";
 
@@ -16,5 +16,10 @@ export class ServicePointController{
     @Post()
     create(@Body() data: CreateServicePointDto){
         return this.servicePointService.create(data);
+    }
+
+    @Delete(':id')
+    remove(@Param('id') id:string){
+        return this.servicePointService.remove(id);
     }
 }

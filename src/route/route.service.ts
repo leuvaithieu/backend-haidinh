@@ -9,7 +9,14 @@ export class RouteService {
   async findAll() {
     return this.prisma.route.findMany({
       include: {
-        routePoints: true,
+        routePoints: {
+          orderBy:{
+            sequence:'asc'
+          },
+          include:{
+            servicePoints:true
+          }
+        }
       },
     });
   }
