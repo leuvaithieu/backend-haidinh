@@ -2,8 +2,8 @@ import { Injectable , ConflictException} from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { Prisma } from '@prisma/client';
 import { CreateDriverDto } from './dto/create-driver.dto';
-import { UpdateDriverDto } from './dto/update-driver.dtp';
-import { error } from 'node:console';
+import { UpdateDriverDto } from './dto/update-driver.dto';
+
 
 @Injectable()
 export class DriverService {

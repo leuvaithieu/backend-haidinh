@@ -77,6 +77,21 @@ model Driver{
   updatedAt DateTime @updatedAt
 }
 
+model Assistant{
+  id String @id @default(cuid())
+  name String
+  phone String @unique
+  cccd String @unique
+  status    AssistantStatus @default(ACTIVE)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+enum AssistantStatus {
+  ACTIVE
+  INACTIVE
+}
+
 model User{
   id String @id @default(cuid())
   username String @unique

@@ -57,6 +57,9 @@ export class UserService {
           role: data.role ?? 'STAFF',
           status: data.status ?? 'ACTIVE',
         },
+        omit:{
+          password:true,
+        }
       });
     } catch (error) {
       if (
@@ -89,6 +92,9 @@ export class UserService {
             id,
         },
         data:updateData,
+        omit:{
+          password:true,
+        }
       });
     } catch (error) {
       if (
@@ -109,7 +115,9 @@ export class UserService {
       where: {
         id,
       },
-      
+      omit:{
+        password:true,
+      }
     });
   }
 }
