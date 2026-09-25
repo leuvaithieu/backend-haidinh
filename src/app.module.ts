@@ -10,12 +10,13 @@ import { VehicleModule } from './vehicle/vehicle.module';
 import { DriverModule } from './driver/driver.module';
 import { UserModule } from './user/user.module';
 import { AuthModule } from './auth/auth.module';
-import { AssistantController } from './assistant/assistant.controller';
 import { AssistantModule } from './assistant/assistant.module';
+import { TripModule } from './trip/trip.module';
+
 
 @Module({
-  imports: [PrismaModule, CustomerModule, RouteModule,RoutePointModule ,ServicePointModule, VehicleModule, DriverModule, UserModule, AuthModule, AssistantModule],
-  controllers: [AppController, AssistantController],
+  imports: [PrismaModule, CustomerModule, RouteModule,RoutePointModule ,ServicePointModule, VehicleModule, DriverModule, UserModule, AuthModule, AssistantModule, TripModule],
+  controllers: [AppController],
   providers: [AppService],
 })
 export class AppModule {}

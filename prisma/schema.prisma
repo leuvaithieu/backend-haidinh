@@ -30,6 +30,7 @@ model Route {
   updatedAt DateTime @updatedAt
 
   routePoints RoutePoint[]
+  trips Trip[]
 }
 
 model RoutePoint {
@@ -62,6 +63,7 @@ model Vehicle {
 
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
+  trips Trip[]
 }
 
 model Driver{
@@ -75,6 +77,9 @@ model Driver{
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  tripAsDriver1 Trip[] @relation("TripDriver1")
+  tripAsDriver2 Trip[] @relation("TripDriver2")
 }
 
 model Assistant{
@@ -85,6 +90,9 @@ model Assistant{
   status    AssistantStatus @default(ACTIVE)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  tripAsAssistant1 Trip[] @relation("TripAssistant1")
+  tripAsAssistant2 Trip[] @relation("TripAssistant2")
 }
 
 enum AssistantStatus {
@@ -103,4 +111,50 @@ model User{
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  createdTrips Trip[]
+}
+
+enum TripStatus{
+  SCHEDULED
+  DEPARTED
+  AT_DESTINATION
+  RETURNING
+  COMPLETED
+  CANCELLED
+}
+
+model Trip{
+  id  String @id @default(cuid())
+  routeId String
+  vehicleId String
+
+  driver1Id String
+  driver2Id String
+
+  assistant1Id String
+  assistant2Id String?
+
+  plannedDeparture DateTime
+  plannedArrival DateTime?
+
+  actualDeparture DateTime?
+  actualArrival DateTime?
+
+  status TripStatus @default(SCHEDULED)
+
+  createdById String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  route Route @relation(fields:[routeId], references:[id])
+  vehicle Vehicle @relation(fields:[vehicleId] , references:[id])
+
+  driver1 Driver @relation("TripDriver1", fields:[driver1Id] , references:[id])
+  driver2 Driver @relation("TripDriver2", fields:[driver2Id] , references:[id])
+
+  assistant1 Assistant @relation("TripAssistant1" , fields:[assistant1Id] , references:[id])
+  assistant2 Assistant? @relation("TripAssistant2" , fields:[assistant2Id] , references:[id])
+
+  createdBy User @relation(fields:[createdById] , references:[id])
 }
