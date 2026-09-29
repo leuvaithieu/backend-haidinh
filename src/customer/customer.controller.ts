@@ -27,7 +27,7 @@ export class CustomerController {
     @Roles('ADMIN','STAFF')
     update(
         @Param('id') id:string,
-        @Body() data:CreateCustomerDto,
+        @Body() data:UpdateCustomerDto,
     ){
         return this.customerService.update(id,data)
     }
