@@ -1,5 +1,4 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { CreateTripDto } from './dto/create-trip.dto';
 import { UpdateTripDto } from './dto/update-trip.dto';
@@ -57,32 +56,35 @@ export class TripService {
         })
     }
 
-    async create(data:CreateTripDto , userId:string){
-        if(data.driver1Id === data.driver2Id){
+    async create(data: CreateTripDto, userId: string) {
+        if (data.driver1Id === data.driver2Id) {
             throw new BadRequestException(
-                'Hai lái xe không được trùng nhau !'
-            )
+            'Hai lái xe không được trùng nhau !'
+            );
         }
 
-        if(data.assistant1Id === data.assistant2Id){
+        if (
+            data.assistant2Id &&
+            data.assistant1Id === data.assistant2Id
+        ) {
             throw new BadRequestException(
-                'Hai phụ xe không được trùng nhau !'
-            )
+            'Hai phụ xe không được trùng nhau !'
+            );
         }
 
         return await this.prisma.trip.create({
-            data:{
-                routeId: data.routeId,
-                vehicleId: data.vehicleId,
-                driver1Id:data.driver1Id,
-                driver2Id:data.driver2Id,
-                assistant1Id:data.assistant1Id,
-                assistant2Id: data.assistant2Id ??  null,
-                plannedDeparture : new Date(data.plannedDeparture),
-                plannedArrival : data.plannedArrival ? new Date(data.plannedArrival) : null,
-                createdById : userId
-            }
-        })
+            data: {
+            routeId: data.routeId,
+            vehicleId: data.vehicleId,
+            driver1Id: data.driver1Id,
+            driver2Id: data.driver2Id,
+            assistant1Id: data.assistant1Id,
+            assistant2Id: data.assistant2Id ?? null,
+            plannedDeparture: new Date(data.plannedDeparture),
+            plannedArrival: new Date(data.plannedArrival),
+            createdById: userId,
+            },
+        });
     }
 
     async update(id:string, data:UpdateTripDto){

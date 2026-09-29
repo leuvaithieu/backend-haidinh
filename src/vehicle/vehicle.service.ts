@@ -64,7 +64,7 @@ export class VehicleService {
         error instanceof Prisma.PrismaClientKnownRequestError &&
         error.code === 'P2002'
       ) {
-        throw new ConflictException('Biển số xe đã tồn tại');
+        throw new ConflictException('Mã xe hoặc biển số xe đã tồn tại');
       }
 
       throw error;

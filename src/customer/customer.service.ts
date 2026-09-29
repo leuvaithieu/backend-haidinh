@@ -1,9 +1,8 @@
-import { Get, Injectable, ConflictException } from '@nestjs/common';
+import { Injectable, ConflictException } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { CreateCustomerDto } from './dto/create-customer.dto';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
 import {Prisma} from '@prisma/client'
-import { PrismaClientKnownRequestError } from 'generated/prisma/internal/prismaNamespace';
 
 @Injectable()
 export class CustomerService {
@@ -22,7 +21,7 @@ export class CustomerService {
                 data,
             });
         }catch (error) {
-            if(error instanceof PrismaClientKnownRequestError){
+            if(error instanceof Prisma.PrismaClientKnownRequestError){
                 if(error.code === 'P2002'){
                     throw new ConflictException('Số điện thoại đã tồn tại')
                 }
@@ -31,7 +30,7 @@ export class CustomerService {
         }
     }
 
-    async update(id:string , data:CreateCustomerDto){
+    async update(id:string , data:UpdateCustomerDto){
         return this.prisma.customer.update({
             where:{
                 id,

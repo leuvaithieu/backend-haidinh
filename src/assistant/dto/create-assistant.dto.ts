@@ -30,7 +30,6 @@ export class CreateAssistantDto{
     @ApiProperty({
         enum:AssistantStatus,
     })
-    @IsString()
     @IsEnum(AssistantStatus)
     status?:AssistantStatus;
 }

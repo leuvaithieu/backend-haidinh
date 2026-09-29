@@ -1,7 +1,4 @@
-export class UpdateVehicleDto {
-  licensePlate!: string;
-  name!: string;
-  seatCount!: number;
-  vehicleType!: string;
-  status!: string;
-}
+import { PartialType } from "@nestjs/swagger";
+import { CreateVehicleDto } from "./create-vehicle.dto";
+
+export class UpdateVehicleDto extends PartialType(CreateVehicleDto){}

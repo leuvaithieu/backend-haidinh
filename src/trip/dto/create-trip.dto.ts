@@ -33,7 +33,7 @@ export class CreateTripDto{
     })
     @IsString()
     @IsNotEmpty()
-    driver2Id !:string;
+    driver2Id!:string;
 
     @ApiProperty({
         example:'cm123assistant1',
@@ -43,13 +43,13 @@ export class CreateTripDto{
     @IsNotEmpty()
     assistant1Id !:string; 
 
-    @ApiProperty({
-        example:'cm123assistant2',
-        description:'ID của phụ xe 2, có thể có chuyến không có'
+    @ApiPropertyOptional({
+        example: 'cm123assistant2',
+        description: 'ID của phụ xe 2, không bắt buộc với chuyến ngắn'
     })
+    @IsOptional()
     @IsString()
-    @IsNotEmpty()
-    assistant2Id ?:string;
+    assistant2Id?: string;
 
     @ApiProperty({
         example:'2026-09-25T06:30:00.000Z',
@@ -64,5 +64,5 @@ export class CreateTripDto{
     })
     @IsNotEmpty()
     @IsDateString()
-    plannedArrival?:string;
+    plannedArrival!:string;
 }

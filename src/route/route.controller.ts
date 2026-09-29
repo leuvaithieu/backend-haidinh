@@ -35,6 +35,6 @@ export class RouteController {
   @Delete(':id')
   @Roles('ADMIN')
   remove(@Param('id') id:string){
-    return this.routeService.remove('id')
+    return this.routeService.remove(id)
   }
 }

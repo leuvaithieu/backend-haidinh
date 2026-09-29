@@ -1,5 +1,5 @@
 import { Injectable , ConflictException} from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { AssistantStatus, Prisma } from '@prisma/client';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { CreateAssistantDto } from './dto/create-assistant.dto';
 import { UpdateAssistantDto } from './dto/update-assistant.dto';
@@ -31,7 +31,7 @@ export class AssistantService {
                     name:data.name,
                     phone:data.phone,
                     cccd:data.cccd,
-                    status:data.status
+                    status:data.status ?? AssistantStatus.ACTIVE,
                 }
             })
         }catch(error){
