@@ -6,7 +6,9 @@ const prisma = new PrismaClient();
 
 async function main() {
   const filePath = path.join(
-    __dirname,
+    process.cwd(),
+    'src',
+    'prisma',
     'customers_1000.json',
   );
 
