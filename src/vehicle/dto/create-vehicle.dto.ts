@@ -1,13 +1,14 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-
 import {
     IsDateString,
+    IsEnum,
     IsInt,
     IsNotEmpty,
     IsOptional,
     IsString,
     Matches,
 } from 'class-validator';
+import { VehicleStatus } from '@prisma/client';
 
 export class CreateVehicleDto {
     @ApiProperty({
@@ -28,7 +29,7 @@ export class CreateVehicleDto {
     name!: string;
 
     @ApiProperty({
-        example: '24',
+        example: 24,
         description: 'Số chỗ ngồi',
     })
     @IsNotEmpty()
@@ -60,10 +61,11 @@ export class CreateVehicleDto {
     inspectionExpiry?: string;
 
     @ApiPropertyOptional({
-        example: 'ACTIVE',
+        enum: VehicleStatus,
+        example: VehicleStatus.ACTIVE,
         description: 'Trạng thái xe',
     })
     @IsOptional()
-    @IsString()
-    status?: string;
+    @IsEnum(VehicleStatus)
+    status?: VehicleStatus;
 }
