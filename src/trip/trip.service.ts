@@ -545,7 +545,45 @@ export class TripService {
                 orderBy: {
                     sequence: 'asc',
                 },
-            });
+        });
+
+        const routePoints = await this.prisma.routePoint.findMany({
+            where:{
+                routeId:currentTrip.routeId,
+            },
+            select:{
+                id:true,
+                name:true,
+                sequence:true,
+            }
+        });
+
+        const buildScheduleData = (
+            points : TripPointScheduleDto[],
+            times: Date[],
+            direction : 'OUTBOUND' | 'RETURN',
+        ) => {
+            return points.map((point,index)=>{
+                const routePoint = routePoints.find(
+                    (item)=> item.id === point.routePointId,
+                );
+
+                if(!routePoint){
+                    throw new BadRequestException(
+                        ` Không tìm thấy điểm ${point.routePointId} trên tuyến!`
+                    );
+                }
+
+                return{
+                    tripId:id,
+                    routePointId: routePoint.id,
+                    pointName: routePoint.name,
+                    direction,
+                    sequencse: index + 1,
+                    plannedTime: times[index],
+                }
+            })
+        };
 
         // Kiểm tra giờ xuất phát chiều đi có thay đổi không.
         const departureChanged = data.plannedDeparture !== undefined && new Date(data.plannedDeparture).getTime() !== currentTrip.plannedDeparture.getTime();
@@ -559,66 +597,173 @@ export class TripService {
         const shouldUpdateOutbound = departureChanged || outboundPointsProvided;
         const shouldUpdateReturn = returnDepartureChanged || returnPointsProvided;
 
+        if(outboundPointsProvided){
+            for(const point of data.outboundPoints!){
+                const exists = routePoints.some(
+                    (routePoint)=> routePoint.id === point.routePointId,
+                );
+                if(!exists){
+                    throw new BadRequestException(
+                        ` Điểm ${point.routePointId} không thuộc tuyến này!`
+                    );
+                }
+            }
+        }
+
+        if(returnPointsProvided){
+            for(const point of data.returnPoints!){
+                const exists = routePoints.some(
+                    (routePoint)=> routePoint.id === point.routePointId,
+                );
+                if(!exists){
+                    throw new BadRequestException(
+                        ` Điểm ${point.routePointId} không thuộc tuyến này!`
+                    )
+                }
+            }
+        }
+
+        if(outboundPointsProvided){
+            const outboundIds = data.outboundPoints!.map(
+                (point)=> point.routePointId,
+            )
+
+            if(new Set(outboundIds).size !== outboundIds.length){
+                throw new BadRequestException('Lịch trình chiều đi không được có điểm trùng lặp!')
+            }
+        }
+
+        if(outboundPointsProvided){
+            const sequences = data.outboundPoints!.map((point)=>{
+                const routePoint = routePoints.find(
+                    (item)=>item.id === point.routePointId,
+                );
+                return routePoint!.sequence;
+            });
+
+            for(let i= 1; i < sequences.length; i++){
+                if(sequences[i] <= sequences[i - 1]){
+                    throw new BadRequestException('Thứ tự điểm chiều đi không đúng với tuyến đường!')
+                }
+            }
+        }
+
+        if(returnPointsProvided){
+            const sequences = data.returnPoints!.map((point)=>{
+                const routePoint = routePoints.find(
+                    (item)=> item.id === point.routePointId,
+                );
+                return routePoint!.sequence;
+            });
+
+            for(let i= 1; i< sequences.length; i++){
+                if(sequences[i]>= sequences[i - 1]){
+                    throw new BadRequestException('Thứ tự điểm chiều về không đúng với tuyến đường!')
+                }
+            }
+        }
+
+        if(returnPointsProvided){
+            const returnIds = data.returnPoints!.map(
+                (point)=>point.routePointId,
+            )
+            if(new Set(returnIds).size !== returnIds.length){
+                throw new BadRequestException('Lịch trình chiều về không được có điểm trùng lặp!')
+            }
+        }
         
+        // lấy giờ mới giờ đi chiều về nếu có cập nhật mới , còn không lấy giờ đã được lưu
+        const newDeparture = data.plannedDeparture ? new Date(data.plannedDeparture) : currentTrip.plannedDeparture;
+        const newReturnDeparture =  returnDepartureChanged && data.returnPlannedDeparture ? new Date(data.returnPlannedDeparture) : currentTrip.returnPlannedDeparture;
+
         
         // Tính lại giờ các điểm chiều đi.
         let outboundTimes: Date[] = [];
+        if(shouldUpdateOutbound){
+            if(outboundPointsProvided){
+                if(data.outboundPoints!.length <2){
+                    throw new BadRequestException(' Lịch chiều đi phải có ít nhất hai điểm');
+                }
 
-        if (departureChanged) {
-            if (currentSchedule.length === 0) {
-                throw new BadRequestException(
-                    'Không có lịch trình chiều đi để cập nhật!',
-                );
+                outboundTimes = this.calculatePointTimes(data.outboundPoints!, newDeparture);
             }
+            else{
+                if(currentSchedule.length === 0){
+                    throw new BadRequestException('Không có lịch chiều đi để cập nhật !');
+                }
 
-            outboundTimes = this.shiftScheduleTimes(
-                currentSchedule.map((point) => point.plannedTime),
-                currentTrip.plannedDeparture,
-                new Date(data.plannedDeparture!),
-            );
+                outboundTimes = this.shiftScheduleTimes(
+                    currentSchedule.map((point)=> point.plannedTime),
+                    currentTrip.plannedDeparture,
+                    newDeparture,
+                )
+            }
         }
 
         // Tính lại giờ các điểm chiều về.
         let returnTimes: Date[] = [];
+        if(shouldUpdateReturn){
+            if(returnPointsProvided){
+                if(data.returnPoints!.length < 2){
+                    throw new BadRequestException('Lịch chiều về phải có ít nhật hai điểm!');
+                }
 
-        if (returnDepartureChanged && data.returnPlannedDeparture) {
-            if (
-                !currentTrip.returnPlannedDeparture ||
-                currentReturnSchedule.length === 0
-            ) {
-                throw new BadRequestException(
-                    'Không có lịch trình chiều về hợp lệ để cập nhật!',
-                );
+                if(!newReturnDeparture){
+                    throw new BadRequestException('Chưa có giờ khởi hành chiều về !')
+                }
+
+                returnTimes = this.calculatePointTimes(data.returnPoints!, newReturnDeparture);
             }
+            else{
+                if(!currentTrip.returnPlannedDeparture || currentReturnSchedule.length === 0){
+                    throw new BadRequestException('Không có lịch trình chiều về để cập nhật !')
+                }
 
-            returnTimes = this.shiftScheduleTimes(
-                currentReturnSchedule.map((point) => point.plannedTime),
-                currentTrip.returnPlannedDeparture,
-                new Date(data.returnPlannedDeparture),
-            );
+                if(!newReturnDeparture){
+                    throw new BadRequestException('Chưa có giờ khởi hành chiều về!')
+                }
+
+                returnTimes = this.shiftScheduleTimes(
+                    currentReturnSchedule.map((point) => point.plannedTime),
+                    currentTrip.returnPlannedDeparture,
+                    newReturnDeparture,
+                    );
+            }
         }
+        
+
+        const outboundScheduleData = shouldUpdateOutbound
+            ? buildScheduleData(
+                data.outboundPoints ?? [],
+                outboundTimes,
+                'OUTBOUND',
+                )
+            : [];
+
+        const returnScheduleDate = shouldUpdateReturn 
+            ? buildScheduleData(
+                data.returnPoints ?? [],
+                returnTimes,
+                'RETURN',
+            )
+        :[];
+
         //lấy giờ mới điểm đến chiều đi nếu giờ chiều đi có cập nhật mới , nếu không cứ lấy giờ cũ
-        const newOutboundArrival = 
-            departureChanged && outboundTimes.length > 0
+        const newOutboundArrival =
+            shouldUpdateOutbound && outboundTimes.length > 0
                 ? outboundTimes[outboundTimes.length - 1]
                 : currentSchedule.length > 0
                     ? currentSchedule[currentSchedule.length - 1].plannedTime
                     : null;
-        // lấy giờ mới giờ đi chiều về nếu có cập nhật mới , còn không lấy giờ đã được lưu
-        const newReturnDeparture = 
-            returnDepartureChanged && data.returnPlannedDeparture
-                ? new Date(data.returnPlannedDeparture)
-                : currentTrip.returnPlannedDeparture;
+            
 
         if(newOutboundArrival && newReturnDeparture && newReturnDeparture <= newOutboundArrival){
             throw new BadRequestException('Giờ khởi hành chiều về phải sau giờ đến điểm cuối chiều đi !')
         }
 
-        const newDeparture = data.plannedDeparture ? new Date(data.plannedDeparture) : currentTrip.plannedDeparture;
-    
-        const newArrival = returnDepartureChanged ? returnTimes[returnTimes.length - 1]  : currentTrip.plannedArrival;
+        const newArrival = shouldUpdateReturn && returnTimes.length > 0 ? returnTimes[returnTimes.length - 1] : currentTrip.plannedArrival;
 
-        const formatTime = (date:Date)=>`${String((date.getUTCHours() + 7) % 24).padStart(2, '0')}: ${String(date.getUTCMinutes()).padStart(2, '0')}`;
+        const formatTime = (date:Date)=>`${String((date.getUTCHours() + 7) % 24).padStart(2, '0')}:${String(date.getUTCMinutes()).padStart(2, '0')}`;
 
         if(data.outboundPoints?.length && data.outboundPoints[0].time !== formatTime(newDeparture)){
             throw new BadRequestException('Giờ điểm đầu chiều đi phải trùng giờ khởi hành !')
@@ -667,9 +812,10 @@ export class TripService {
         }
         
         // Giờ đến cuối chuyến được lấy từ điểm cuối chiều về.
-        const plannedArrival = returnDepartureChanged
-            ? returnTimes[returnTimes.length - 1]
-            : undefined;
+        const plannedArrival =  shouldUpdateReturn ? returnTimes[returnTimes.length - 1] : undefined;
+        if(shouldUpdateReturn && !plannedArrival){
+            throw new BadRequestException('Không xác định được thời gian đến cuối hành trình!');
+        }
 
         if (returnDepartureChanged && !plannedArrival) {
             throw new BadRequestException(
@@ -701,17 +847,28 @@ export class TripService {
             });
 
             // Cập nhật giờ các điểm chiều đi.
-            if (departureChanged) {
-                for (let i = 0; i < currentSchedule.length; i++) {
-                    await tx.tripRoutePoint.update({
-                        where: {
-                            id: currentSchedule[i].id,
-                        },
-                        data: {
-                            plannedTime: outboundTimes[i],
-                        },
-                    });
-                }
+            if(shouldUpdateOutbound){
+                await tx.tripRoutePoint.deleteMany({
+                    where:{
+                        tripId:id,
+                        direction:'OUTBOUND',
+                    },
+                });
+
+                await tx.tripRoutePoint.createMany({
+                    data : data.outboundPoints
+                        ? data.outboundPoints.map((point,index)=>({
+                            tripId : id,
+                            routePointId : point.routePointId,
+                            pointName : currentSchedule.find(
+                                (item)=> item.routePointId === point.routePointId,
+                            )?.pointName ?? '',
+                            direction:'OUTBOUND',
+                            sequence: index + 1,
+                            plannedTime : outboundTimes[index],
+                        }))
+                    :[],
+                })
             }
 
             // Cập nhật giờ các điểm chiều về.
