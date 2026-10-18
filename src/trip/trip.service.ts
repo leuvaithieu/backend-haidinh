@@ -129,6 +129,7 @@ export class TripService {
                 status:true,
             },
         });
+        
 
         if(!vehicle){
             throw new BadRequestException('Không tìm thấy xe !');
@@ -140,6 +141,32 @@ export class TripService {
             )
         }
 
+        const drivers = await this.prisma.driver.findMany({
+            where:{
+                id:{
+                    in:[data.driver1Id, data.driver2Id],
+                },
+            },
+            select:{
+                id:true,
+                name:true,
+                status:true,
+            },
+        });
+
+        if(drivers.length !==2){
+            throw new BadRequestException('Không tìm thấy đầy đủ thông tin hai lái xe!')
+        }
+
+        const inactiveDriver = drivers.find(
+            (driver)=>driver.status !=='ACTIVE',
+        );
+
+        if(inactiveDriver){
+            throw new BadRequestException(
+                ` Lái xe ${inactiveDriver.name} đang ngừng hoạt dộng, không thể phân công chuyến !`
+            )
+        }
 
         if (data.driver1Id === data.driver2Id) {
             throw new BadRequestException(
@@ -154,6 +181,38 @@ export class TripService {
             throw new BadRequestException(
             'Hai phụ xe không được trùng nhau !'
             );
+        }
+
+        const assistantIds = [
+            data.assistant1Id,
+            ...(data.assistant2Id ? [data.assistant2Id]:[]),
+        ];
+
+        const assistants = await this.prisma.assistant.findMany({
+            where:{
+                id: {
+                    in: assistantIds,
+                },
+            },
+            select:{
+                id:true,
+                name:true,
+                status:true,
+            },
+        });
+
+        if(assistants.length !== assistantIds.length){
+            throw new BadRequestException('Không tìm thấy đầy đủ thông tin phụ xe được phân công !');
+        }
+
+        const inactiveAssistant = assistants.find(
+            (assistant) => assistant.status !=='ACTIVE',
+        );
+
+        if(inactiveAssistant){
+            throw new BadRequestException(
+                ` Phụ xe ${inactiveAssistant.name} đang ngừng hoạt động, không thể phân công chuyến này !`
+            )
         }
 
         const route = await this.prisma.route.findUnique({
@@ -278,6 +337,36 @@ export class TripService {
             throw new BadRequestException('Giờ xuất phát chiều về phải sau khi xe đến điểm cuối của chiều đi !')
         }
 
+        if(
+            data.outboundPoints.length < 2 || data.returnPoints.length < 2
+        ){
+            throw new BadRequestException('Lịch trình mỗi chiều phải có ít nhất 2 điểm !')
+        }
+
+        const newDeparture = new Date(data.plannedDeparture);
+        const newArrival = returnTimes[returnTimes.length - 1];
+
+        const conflictingTrip = await this.prisma.trip.findFirst({
+            where:{
+                vehicleId: data.vehicleId,
+                status:{
+                    not:'CANCELLED',
+                },
+                plannedDeparture:{
+                    lt:newArrival,
+                },
+                plannedArrival:{
+                    gt:newDeparture,
+                },
+            },
+        });
+
+        if(conflictingTrip){
+            throw new BadRequestException(
+                `Xe đã được phân công chuyến khác trong khoảng thời gian này! Mã chuyến : ${conflictingTrip.id},`
+            );
+        }
+
         const outboundSchedule = data.outboundPoints.map((point,index)=>({
             routePointId : point.routePointId,
             pointName : route.routePoints.find(
@@ -321,9 +410,33 @@ export class TripService {
         const currentTrip = await this.prisma.trip.findUnique({
             where: { id },
         });
+        
+        if(!currentTrip){
+            throw new BadRequestException('Không tìm thấy chuyến xe !');
+        }
 
-        if (!currentTrip) {
-            throw new BadRequestException('Không tìm thấy chuyến xe!');
+        const vehicleId = data.vehicleId ?? currentTrip.vehicleId;
+
+        const vehicle = await this.prisma.vehicle.findUnique({
+            where: {
+                id: vehicleId,
+            },
+            select: {
+                id: true,
+                name: true,
+                licensePlate: true,
+                status: true,
+            },
+        });
+
+        if (!vehicle) {
+            throw new BadRequestException('Không tìm thấy xe được phân công!');
+        }
+
+        if (vehicle.status !== 'ACTIVE') {
+            throw new BadRequestException(
+                `Xe ${vehicle.name} - ${vehicle.licensePlate} đang ngừng hoạt động, không thể phân công chuyến!`,
+            );
         }
 
         // Tạm thời chưa cho đổi tuyến khi chưa xử lý việc thay thế lịch trình.
@@ -337,8 +450,68 @@ export class TripService {
         const driver1Id = data.driver1Id ?? currentTrip.driver1Id;
         const driver2Id = data.driver2Id ?? currentTrip.driver2Id;
 
+        const drivers = await this.prisma.driver.findMany({
+            where :{
+                id: {
+                    in:[driver1Id, driver2Id],
+                },
+            },
+            select:{
+                id:true,
+                name:true,
+                status:true,
+                phone:true,
+            },
+        });
+
+        if(drivers.length !==2){
+            throw new BadRequestException('Không tìm thấy đầy đủ thông tin hai lái xe !');
+        }
+
+        const inactiveDriver = drivers.find(
+            (driver)=> driver.status !== 'ACTIVE'
+        );
+
+        if(inactiveDriver){
+            throw new BadRequestException(
+                ` Lái xe ${inactiveDriver.name} đang ngừng hoạt động, không thể phân công chuyến này !`
+            );
+        }
+
         const assistant1Id = data.assistant1Id ?? currentTrip.assistant1Id;
         const assistant2Id = data.assistant2Id ?? currentTrip.assistant2Id;
+
+        const assistantIds = [assistant1Id,...(assistant2Id ? [assistant2Id]:[])];
+
+        const assistants =  await this.prisma.assistant.findMany({
+            where:{
+                id:{
+                    in:assistantIds,
+                },
+            },
+            select:{
+                id:true,
+                name:true,
+                status:true,
+                phone:true,
+            },
+        });
+
+        if(assistants.length !== assistantIds.length){
+            throw new BadRequestException(
+                'Không thể tìm thấy đầy đủ thông tin phụ xe được phân công !'
+            );
+        }
+
+        const inactiveAssistant = assistants.find(
+            (assistant)=> assistant.status !== 'ACTIVE',
+        );
+
+        if(inactiveAssistant){
+            throw new BadRequestException(
+                ` Phụ xe ${inactiveAssistant.name} đã ngừng hoạt động, không thể phân công chuyến này !`
+            )
+        }
 
         if (driver1Id === driver2Id) {
             throw new BadRequestException(
@@ -375,17 +548,19 @@ export class TripService {
             });
 
         // Kiểm tra giờ xuất phát chiều đi có thay đổi không.
-        const departureChanged =
-            data.plannedDeparture !== undefined &&
-            new Date(data.plannedDeparture).getTime() !==
-                currentTrip.plannedDeparture.getTime();
+        const departureChanged = data.plannedDeparture !== undefined && new Date(data.plannedDeparture).getTime() !== currentTrip.plannedDeparture.getTime();
 
         // Kiểm tra giờ xuất phát chiều về có thay đổi không.
-        const returnDepartureChanged =
-            data.returnPlannedDeparture !== undefined &&
-            new Date(data.returnPlannedDeparture).getTime() !==
-                (currentTrip.returnPlannedDeparture?.getTime() ?? null);
+        const returnDepartureChanged = data.returnPlannedDeparture !== undefined && new Date(data.returnPlannedDeparture).getTime() !== (currentTrip.returnPlannedDeparture?.getTime() ?? null);
 
+        const outboundPointsProvided = data.outboundPoints !== undefined;
+        const returnPointsProvided = data.returnPoints !== undefined;
+
+        const shouldUpdateOutbound = departureChanged || outboundPointsProvided;
+        const shouldUpdateReturn = returnDepartureChanged || returnPointsProvided;
+
+        
+        
         // Tính lại giờ các điểm chiều đi.
         let outboundTimes: Date[] = [];
 
@@ -438,6 +613,58 @@ export class TripService {
         if(newOutboundArrival && newReturnDeparture && newReturnDeparture <= newOutboundArrival){
             throw new BadRequestException('Giờ khởi hành chiều về phải sau giờ đến điểm cuối chiều đi !')
         }
+
+        const newDeparture = data.plannedDeparture ? new Date(data.plannedDeparture) : currentTrip.plannedDeparture;
+    
+        const newArrival = returnDepartureChanged ? returnTimes[returnTimes.length - 1]  : currentTrip.plannedArrival;
+
+        const formatTime = (date:Date)=>`${String((date.getUTCHours() + 7) % 24).padStart(2, '0')}: ${String(date.getUTCMinutes()).padStart(2, '0')}`;
+
+        if(data.outboundPoints?.length && data.outboundPoints[0].time !== formatTime(newDeparture)){
+            throw new BadRequestException('Giờ điểm đầu chiều đi phải trùng giờ khởi hành !')
+        }
+
+        if(data.returnPoints?.length && newReturnDeparture && data.returnPoints[0].time !== formatTime(newReturnDeparture)){
+            throw new BadRequestException('Giờ điểm đầu chiều về phải trùng giờ khởi hành chiều về !');
+        }
+
+        
+
+
+        if(!newArrival){
+            throw new BadRequestException('Không thể xác định giờ đến dự kiến của chuyến');
+        }
+
+        const conflictingTrip = await this.prisma.trip.findFirst({
+            where : {
+                id:{
+                    not: id,
+                },
+                vehicleId,
+                status:{
+                    not : 'CANCELLED',
+                },
+                plannedDeparture:{
+                    lt: newArrival,
+                },
+                OR:[
+                    {
+                        plannedArrival:null,
+                    },
+                    {
+                        plannedArrival : {
+                            gt: newDeparture,
+                        },
+                    },
+                ],
+            },
+        });
+
+        if(conflictingTrip){
+            throw new BadRequestException(
+                'Xe đã được phân công cho chuyến khác trong khoảng thời gian này !'
+            );
+        }
         
         // Giờ đến cuối chuyến được lấy từ điểm cuối chiều về.
         const plannedArrival = returnDepartureChanged
@@ -459,7 +686,7 @@ export class TripService {
                     driver1Id: data.driver1Id,
                     driver2Id: data.driver2Id,
                     assistant1Id: data.assistant1Id,
-                    assistant2Id: data.assistant2Id ?? undefined,
+                    assistant2Id: data.assistant2Id,
 
                     plannedDeparture: departureChanged
                         ? new Date(data.plannedDeparture!)
