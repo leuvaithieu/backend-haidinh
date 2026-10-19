@@ -58,11 +58,12 @@ export class CreateTripDto {
 
     @ApiPropertyOptional({
         example: 'cm123assistant2',
-        description: 'ID phụ xe 2, không bắt buộc với chuyến ngắn',
+        description: 'ID phụ xe 2, không bắt buộc với chuyến ngắn và ngày tết',
+        nullable:true,
     })
     @IsOptional()
     @IsString()
-    assistant2Id?: string;
+    assistant2Id?: string | null;
 
     @ApiProperty({
         example: '2026-10-13T06:30:00+07:00',
@@ -77,24 +78,6 @@ export class CreateTripDto {
     })
     @IsDateString()
     returnPlannedDeparture!: string;
-
-    // @ApiProperty({
-    //     type: [TripPointScheduleDto],
-    //     description: 'Lịch các điểm theo thứ tự chạy chiều đi',
-    // })
-    // @IsArray()
-    // @ValidateNested({ each: true })
-    // @Type(() => TripPointScheduleDto)
-    // outboundPoints!: TripPointScheduleDto[];
-
-    // @ApiProperty({
-    //     type: [TripPointScheduleDto],
-    //     description: 'Lịch các điểm theo thứ tự chạy chiều về',
-    // })
-    // @IsArray()
-    // @ValidateNested({ each: true })
-    // @Type(() => TripPointScheduleDto)
-    // returnPoints!: TripPointScheduleDto[];
 
     @ApiProperty({
         enum: RouteScheduleType,

@@ -10,7 +10,7 @@ export class TripService {
 
     
     private calculatePointTimes(
-        points: TripPointScheduleDto[],
+        points: {routePointId:string}[],
         departure: Date,
         routePoints: {
             id: string;
@@ -216,6 +216,7 @@ export class TripService {
                 id:true,
                 name:true,
                 status:true,
+                licenseExpiry:true,
             },
         });
 
@@ -308,86 +309,23 @@ export class TripService {
                 travelDurationMinutes:true,
             }
         })
-
+        
         if(route.routePoints.length < 2){
-            throw new BadRequestException('Tuyến xe phải có ít nhất hai điểm tuyến !');
-        };
-
-        if(
-            data.outboundPoints.length < 2 || data.returnPoints.length < 2
-        ){
-            throw new BadRequestException('Lịch trình mỗi chiều phải có ít nhất 2 điểm !')
-        }
-
-        const routePointIds = route.routePoints.map((point) =>point.id);
-
-        const allSchedulePoints = [
-            ...data.outboundPoints,
-            ...data.returnPoints,
-        ]
-
-        for(const point of allSchedulePoints){
-            if(!routePointIds.includes(point.routePointId)){
-                throw new BadRequestException(`Điểm tuyến ${point.routePointId} không thuộc tuyến đã chọn !`);
-            };
-        };
-
-        const outboundIds = data.outboundPoints.map(
-            (point) =>point.routePointId,
-        );
-
-        const returnIds = data.returnPoints.map(
-            (point) =>point.routePointId,
-        )
-
-        if(new Set(outboundIds).size !==outboundIds.length){
-            throw new BadRequestException('Lịch chiều đi có điểm tuyến bị trùng !');
-        }
-
-        if(new Set(returnIds).size !== returnIds.length){
-            throw new BadRequestException('Lịch chiều về có điểm tuyến bị trùng !')
-        }
-
-        const expectedOutbound = [...route.routePoints].sort(
-            (a,b) => a.sequence - b.sequence,
-        );
-
-        const expectedReturn = [...route.routePoints].sort(
-            (a,b) => b.sequence - a.sequence,
-        );
-
-        const isSubsequence = (actualIds: string[], expectedIds: string[]) => {
-            let expectedIndex = 0;
-
-            for (const id of actualIds) {
-                while (
-                    expectedIndex < expectedIds.length &&
-                    expectedIds[expectedIndex] !== id
-                ) {
-                    expectedIndex++;
-                }
-
-                if (expectedIndex >= expectedIds.length) {
-                    return false;
-                }
-
-                expectedIndex++;
-            }
-
-            return actualIds.length >= 2;
-        };
-
-        if (!isSubsequence(outboundIds, expectedOutbound.map(point => point.id))) {
-            throw new BadRequestException('Thứ tự điểm tuyến chiều đi không hợp lệ!');
-        }
-
-        if (!isSubsequence(returnIds, expectedReturn.map(point => point.id))) {
-            throw new BadRequestException('Thứ tự điểm tuyến chiều về không hợp lệ!');
+            throw new BadRequestException('Tuyến xe phải có ít nhất hai điểm tuyến!');
         }
         
-        const outboundSchedulePoints = data.outboundPoints;
-        const returnSchedulePoints = data.returnPoints;
-        
+        //Chiều đi: điểm tuyến theo sequence tăng dần.
+        const outboundSchedulePoints = route.routePoints.map((point)=>({
+            routePointId: point.id,
+        }));
+
+        //chiều về: đào ngược thứ tự các điểm tuyến.
+        const returnSchedulePoints = [...route.routePoints]
+            .reverse()
+            .map((point)=>({
+                routePointId: point.id,
+            }))
+        ;
 
         const outboundTimes = this.calculatePointTimes(
             outboundSchedulePoints,
@@ -402,21 +340,17 @@ export class TripService {
             segments
         );
 
-        const outboundFirstTime = outboundSchedulePoints[0].time;
-        const returnFirstTime = returnSchedulePoints[0].time;
+        //Kiểm tra lái xe phải còn hạn cho đến khi chuyến kết thúc
+        const journeyEnd = returnTimes[returnTimes.length - 1];
 
-        const formatTime = (date :Date)=>
-            `${String((date.getUTCHours() + 7) % 24).padStart(2,'0')}:${String(
-                date.getUTCMinutes(),
-            ).padStart(2,'0')}`;
+        const expiriedDriver = drivers.find(
+            (driver)=>!driver.licenseExpiry || new Date(driver.licenseExpiry) < journeyEnd
+        );
 
-        if(outboundFirstTime && outboundFirstTime !== formatTime(new Date(data.plannedDeparture))){
+        if(expiriedDriver){
             throw new BadRequestException(
-                'Giờ điểm đầu chiều đi phải trùng giờ xuất phát !'
-            );
-        }
-        if(returnFirstTime && returnFirstTime !== formatTime(new Date(data.returnPlannedDeparture))){
-            throw new BadRequestException('Giờ điểm đầu chiều về phải trùng giờ xuất phát')
+                `GPLX của tài xế ${expiriedDriver.name} đã hết hạn trước khi kết thúc chuyến này !`
+            )
         }
 
         const outboundLastTime = outboundTimes[outboundTimes.length - 1];
@@ -439,9 +373,16 @@ export class TripService {
                 plannedDeparture:{
                     lt:newArrival,
                 },
-                plannedArrival:{
-                    gt:newDeparture,
-                },
+                OR: [
+                    {
+                        plannedArrival: null,
+                    },
+                    {
+                        plannedArrival: {
+                            gt: newDeparture,
+                        },
+                    },
+                ],
             },
         });
 
@@ -451,24 +392,123 @@ export class TripService {
             );
         }
 
-        const outboundSchedule = data.outboundPoints.map((point,index)=>({
+        const conflictingDriverTrip = await this.prisma.trip.findFirst({
+            where:{
+                status:{
+                    not:'CANCELLED',
+                },
+                AND:[
+                    {
+                        OR:[
+                            {driver1Id:{
+                                in:[
+                                    data.driver1Id,
+                                    data.driver2Id,
+                                ]
+                            }},
+                            {
+                                driver2Id:{
+                                    in:[
+                                        data.driver1Id,
+                                        data.driver2Id,
+                                    ]
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        plannedDeparture:{
+                            lt: newArrival,
+                        },
+                    },
+                    {
+                        OR:[
+                            {plannedArrival : null},
+                            {
+                                plannedArrival:{
+                                    gt: newDeparture,
+                                },
+                            },
+                        ]
+                    },
+                ],
+            },
+            select:{
+                id: true,
+                driver1Id: true,
+                driver2Id: true,
+                plannedDeparture : true,
+                plannedArrival : true,
+            },
+        });
+
+        if(conflictingDriverTrip){
+            throw new BadRequestException(
+                `Tài xế đã được phân công chuyến khác trong khoảng thời gian này! Mã chuyến: ${conflictingDriverTrip.id} !`
+            )
+        }
+
+       
+        
+        const conflictingAssistantTrip = await this.prisma.trip.findFirst({
+            where: {
+                status: {
+                    not: 'CANCELLED',
+                },
+                AND: [
+                    {
+                        OR: [
+                            { assistant1Id: { in: assistantIds } },
+                            { assistant2Id: { in: assistantIds } },
+                        ],
+                    },
+                    {
+                        plannedDeparture: {
+                            lt: newArrival,
+                        },
+                    },
+                    {
+                        OR: [
+                            { plannedArrival: null },
+                            {
+                                plannedArrival: {
+                                    gt: newDeparture,
+                                },
+                            },
+                        ],
+                    },
+                ],
+            },
+            select: {
+                id: true,
+            },
+        });
+
+        if (conflictingAssistantTrip) {
+            throw new BadRequestException(
+                `Phụ xe đã được phân công chuyến khác trong khoảng thời gian này! Mã chuyến: ${conflictingAssistantTrip.id}`,
+            );
+        }
+
+
+        const outboundSchedule = outboundSchedulePoints.map((point, index)=>({
+            routePointId : point.routePointId,
+            pointName: route.routePoints.find(
+                (routePoint)=> routePoint.id === point.routePointId,
+            )!.name,
+            direction:'OUTBOUND' as const,
+            sequence: index + 1,
+            plannedTime : outboundTimes[index]
+        }));
+
+        const returnSchedule = returnSchedulePoints.map((point, index)=>({
             routePointId : point.routePointId,
             pointName : route.routePoints.find(
                 (routePoint)=> routePoint.id === point.routePointId,
             )!.name,
-            direction: 'OUTBOUND' as const,
-            sequence : index + 1,
-            plannedTime : outboundTimes[index],
-        }));
-
-        const returnSchedule = data.returnPoints.map((point,index)=>({
-            routePointId : point.routePointId,
-            pointName: route.routePoints.find(
-                (routePoint) => routePoint.id === point.routePointId,
-            )!.name,
             direction : 'RETURN' as const,
-            sequence: index + 1 ,
-            plannedTime : returnTimes[index],
+            sequence : index + 1,
+            plannedTime: returnTimes[index]
         }))
 
         return await this.prisma.trip.create({
@@ -481,7 +521,6 @@ export class TripService {
             assistant1Id: data.assistant1Id,
             assistant2Id: data.assistant2Id ?? null,
             plannedDeparture: new Date(data.plannedDeparture),
-            //plannedArrival: new Date(data.plannedArrival),
             returnPlannedDeparture : new Date(data.returnPlannedDeparture),
             plannedArrival : returnTimes[returnTimes.length - 1],
             tripRoutePoints:{create:[...outboundSchedule, ...returnSchedule]},
@@ -552,6 +591,7 @@ export class TripService {
                 name:true,
                 status:true,
                 phone:true,
+                licenseExpiry:true,
             },
         });
 
@@ -570,7 +610,7 @@ export class TripService {
         }
 
         const assistant1Id = data.assistant1Id ?? currentTrip.assistant1Id;
-        const assistant2Id = data.assistant2Id ?? currentTrip.assistant2Id;
+        const assistant2Id = data.assistant2Id !== undefined ? data.assistant2Id : currentTrip.assistant2Id;
 
         const assistantIds = [assistant1Id,...(assistant2Id ? [assistant2Id]:[])];
 
@@ -878,8 +918,8 @@ export class TripService {
                 ? outboundTimes[outboundTimes.length - 1]
                 : currentSchedule.length > 0
                     ? currentSchedule[currentSchedule.length - 1].plannedTime
-                    : null;
-            
+                    : null
+        ;    
 
         if(newOutboundArrival && newReturnDeparture && newReturnDeparture <= newOutboundArrival){
             throw new BadRequestException('Giờ khởi hành chiều về phải sau giờ đến điểm cuối chiều đi !')
@@ -899,6 +939,16 @@ export class TripService {
 
         if(!newArrival){
             throw new BadRequestException('Không thể xác định giờ đến dự kiến của chuyến');
+        }
+
+        const expiriedDriver = drivers.find(
+            (driver)=> !driver.licenseExpiry || new Date(driver.licenseExpiry) < newArrival
+        );
+
+        if(expiriedDriver){
+            throw new BadRequestException(
+                `GPLX của tài xế ${expiriedDriver.name} đã hết hạn trước khi kết thúc chuyến này !`
+            )
         }
 
         const conflictingTrip = await this.prisma.trip.findFirst({
@@ -931,6 +981,104 @@ export class TripService {
                 'Xe đã được phân công cho chuyến khác trong khoảng thời gian này !'
             );
         }
+
+        const conflictingDriverTrip = await this.prisma.trip.findFirst({
+            where : {
+                id:{
+                    not:id,
+                },
+                status:{
+                    not:'CANCELLED',
+                },
+                AND:[
+                    {
+                      OR: [
+                            {
+                                driver1Id: {
+                                    in: [driver1Id, driver2Id],
+                                },
+                            },
+                            {
+                                driver2Id: {
+                                    in: [driver1Id, driver2Id],
+                                },
+                            },
+                        ],
+                    },
+                    {
+                        plannedDeparture:{
+                            lt: newArrival,
+                        }
+                    },
+                    {
+                        OR: [
+                            {
+                                plannedArrival: null,
+                            },
+                            {
+                                plannedArrival: {
+                                    gt: newDeparture,
+                                },
+                            },
+                        ]
+                    }
+                ]
+            },
+            select:{
+                id: true,
+            }
+        });
+
+        if(conflictingDriverTrip){
+            throw new BadRequestException(
+                ` Tài xế đã được phân công chuyến khác trong khoảng thời gian này! Mã chuyến: ${conflictingDriverTrip.id} !`
+            )
+        }
+
+        
+        const conflictingAssistantTrip = await this.prisma.trip.findFirst({
+            where: {
+                id: {
+                    not: id,
+                },
+                status: {
+                    not: 'CANCELLED',
+                },
+                AND: [
+                    {
+                        OR: [
+                            { assistant1Id: { in: assistantIds } },
+                            { assistant2Id: { in: assistantIds } },
+                        ],
+                    },
+                    {
+                        plannedDeparture: {
+                            lt: newArrival,
+                        },
+                    },
+                    {
+                        OR: [
+                            { plannedArrival: null },
+                            {
+                                plannedArrival: {
+                                    gt: newDeparture,
+                                },
+                            },
+                        ],
+                    },
+                ],
+            },
+            select: {
+                id: true,
+            },
+        });
+
+        if (conflictingAssistantTrip) {
+            throw new BadRequestException(
+                `Phụ xe đã được phân công chuyến khác trong khoảng thời gian này! Mã chuyến: ${conflictingAssistantTrip.id}`,
+            );
+        }
+
         
         // Giờ đến cuối chuyến được lấy từ điểm cuối chiều về.
         const plannedArrival =  shouldUpdateReturn ? returnTimes[returnTimes.length - 1] : undefined;
