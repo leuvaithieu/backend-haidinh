@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsInt } from "class-validator";
+import { IsString, IsNotEmpty, IsInt, IsOptional,Matches } from "class-validator";
 import { ApiProperty } from "@nestjs/swagger";
 
 export class CreateRoutePointDto{
@@ -29,4 +29,9 @@ export class CreateRoutePointDto{
     @IsNotEmpty()
     @IsInt()
     sequence!:number;
+
+    @IsOptional()
+    @IsString()
+    @Matches(/^([01]\d|2[0-3]):[0-5]\d$/)
+    defaultTime?: string;
 }

@@ -579,7 +579,7 @@ export class TripService {
                     routePointId: routePoint.id,
                     pointName: routePoint.name,
                     direction,
-                    sequencse: index + 1,
+                    sequence: index + 1,
                     plannedTime: times[index],
                 }
             })
@@ -733,21 +733,41 @@ export class TripService {
         
 
         const outboundScheduleData = shouldUpdateOutbound
-            ? buildScheduleData(
-                data.outboundPoints ?? [],
-                outboundTimes,
-                'OUTBOUND',
+            ? outboundPointsProvided
+                ? buildScheduleData(
+                    data.outboundPoints!,
+                    outboundTimes,
+                    'OUTBOUND',
                 )
-            : [];
+                : currentSchedule.map((point,index)=>({
+                    tripId : id,
+                    routePointId : point.routePointId,
+                    pointName : point.pointName,
+                    direction: 'OUTBOUND' as const,
+                    sequence : point.sequence,
+                    plannedTime : outboundTimes[index],
+                }))
+            :[]
+        ;
 
-        const returnScheduleDate = shouldUpdateReturn 
-            ? buildScheduleData(
-                data.returnPoints ?? [],
-                returnTimes,
-                'RETURN',
-            )
-        :[];
-
+        
+        const returnScheduleData = shouldUpdateReturn 
+            ? returnPointsProvided
+                ? buildScheduleData(
+                    data.returnPoints!,
+                    returnTimes,
+                    'RETURN',
+                )
+                : currentSchedule.map((point, index)=>({
+                    tripId: id,
+                    routePointId: point.routePointId,
+                    pointName : point.pointName,
+                    direction: 'RETURN' as const,
+                    sequence : point.sequence,
+                    plannedTime : returnTimes[index]
+                }))
+            :[]
+        ;
         //lấy giờ mới điểm đến chiều đi nếu giờ chiều đi có cập nhật mới , nếu không cứ lấy giờ cũ
         const newOutboundArrival =
             shouldUpdateOutbound && outboundTimes.length > 0
@@ -817,12 +837,6 @@ export class TripService {
             throw new BadRequestException('Không xác định được thời gian đến cuối hành trình!');
         }
 
-        if (returnDepartureChanged && !plannedArrival) {
-            throw new BadRequestException(
-                'Không thể xác định giờ đến dự kiến của chuyến!',
-            );
-        }
-
         // Cập nhật chuyến xe và lịch trình trong cùng transaction.
         return this.prisma.$transaction(async (tx) => {
             const updatedTrip = await tx.trip.update({
@@ -855,37 +869,26 @@ export class TripService {
                     },
                 });
 
-                await tx.tripRoutePoint.createMany({
-                    data : data.outboundPoints
-                        ? data.outboundPoints.map((point,index)=>({
-                            tripId : id,
-                            routePointId : point.routePointId,
-                            pointName : currentSchedule.find(
-                                (item)=> item.routePointId === point.routePointId,
-                            )?.pointName ?? '',
-                            direction:'OUTBOUND',
-                            sequence: index + 1,
-                            plannedTime : outboundTimes[index],
-                        }))
-                    :[],
-                })
+                if(outboundScheduleData.length > 0){
+                    await tx.tripRoutePoint.createMany({
+                        data: outboundScheduleData,
+                    })
+                }
             }
 
             // Cập nhật giờ các điểm chiều về.
-            if (returnDepartureChanged) {
-                for (
-                    let i = 0;
-                    i < currentReturnSchedule.length;
-                    i++
-                ) {
-                    await tx.tripRoutePoint.update({
-                        where: {
-                            id: currentReturnSchedule[i].id,
-                        },
-                        data: {
-                            plannedTime: returnTimes[i],
-                        },
-                    });
+            if(shouldUpdateReturn){
+                await tx.tripRoutePoint.deleteMany({
+                    where : {
+                        tripId : id,
+                        direction : 'RETURN',
+                    }
+                });
+
+                if(returnScheduleData.length > 0){
+                    await tx.tripRoutePoint.createMany({
+                        data: returnScheduleData,
+                    })
                 }
             }
 

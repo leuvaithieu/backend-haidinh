@@ -38,6 +38,7 @@ model RoutePoint {
   routeId  String
   name     String
   sequence Int
+  defaultTime String?
 
   route           Route            @relation(fields: [routeId], references: [id])
   servicePoints   ServicePoint[]
