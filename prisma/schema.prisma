@@ -22,6 +22,30 @@ model Customer {
   deletedAt    DateTime?
 }
 
+
+model RouteSegment {
+  id String @id @default(cuid())
+
+  routeId String
+  fromRoutePointId String
+  toRoutePointId String
+
+  scheduleType RouteScheduleType @default(NORMAL)
+  travelDurationMinutes Int
+
+  route Route @relation(fields: [routeId], references: [id], onDelete: Cascade)
+
+  fromRoutePoint RoutePoint @relation("RouteSegmentFrom", fields: [fromRoutePointId], references: [id], onDelete: Cascade)
+  toRoutePoint RoutePoint @relation("RouteSegmentTo", fields: [toRoutePointId], references: [id], onDelete: Cascade)
+
+  @@unique([routeId, fromRoutePointId, toRoutePointId, scheduleType])
+}
+
+enum RouteScheduleType {
+  NORMAL
+  TET
+}
+
 model Route {
   id   String @id @default(cuid())
   name String
@@ -31,6 +55,7 @@ model Route {
 
   routePoints RoutePoint[]
   trips       Trip[]
+  routeSegments RouteSegment[]
 }
 
 model RoutePoint {
@@ -39,10 +64,14 @@ model RoutePoint {
   name     String
   sequence Int
   defaultTime String?
+  travelDurationMinutes Int?
 
   route           Route            @relation(fields: [routeId], references: [id])
   servicePoints   ServicePoint[]
   tripRoutePoints TripRoutePoint[]
+
+  outgoingSegments RouteSegment[] @relation("RouteSegmentFrom")
+  incomingSegments RouteSegment[] @relation("RouteSegmentTo")
 
   @@unique([routeId, sequence])
 }
@@ -160,6 +189,7 @@ model Trip {
   actualArrival   DateTime?
 
   status TripStatus @default(SCHEDULED)
+  scheduleType RouteScheduleType @default(NORMAL)
 
   createdById String
 

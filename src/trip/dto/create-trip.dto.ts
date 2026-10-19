@@ -5,11 +5,13 @@ import {
     IsOptional,
     IsDateString,
     IsArray,
+    IsEnum,
     ValidateNested,
     Matches,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { RouteScheduleType } from '@prisma/client';
 
 export class TripPointScheduleDto {
     @ApiProperty({
@@ -76,21 +78,29 @@ export class CreateTripDto {
     @IsDateString()
     returnPlannedDeparture!: string;
 
-    @ApiProperty({
-        type: [TripPointScheduleDto],
-        description: 'Lịch các điểm theo thứ tự chạy chiều đi',
-    })
-    @IsArray()
-    @ValidateNested({ each: true })
-    @Type(() => TripPointScheduleDto)
-    outboundPoints!: TripPointScheduleDto[];
+    // @ApiProperty({
+    //     type: [TripPointScheduleDto],
+    //     description: 'Lịch các điểm theo thứ tự chạy chiều đi',
+    // })
+    // @IsArray()
+    // @ValidateNested({ each: true })
+    // @Type(() => TripPointScheduleDto)
+    // outboundPoints!: TripPointScheduleDto[];
+
+    // @ApiProperty({
+    //     type: [TripPointScheduleDto],
+    //     description: 'Lịch các điểm theo thứ tự chạy chiều về',
+    // })
+    // @IsArray()
+    // @ValidateNested({ each: true })
+    // @Type(() => TripPointScheduleDto)
+    // returnPoints!: TripPointScheduleDto[];
 
     @ApiProperty({
-        type: [TripPointScheduleDto],
-        description: 'Lịch các điểm theo thứ tự chạy chiều về',
+        enum: RouteScheduleType,
+        example: RouteScheduleType.NORMAL,
+        description: 'Loại lịch chạy: NORMAL (ngày thường) hoặc TET (dịp Tết)',
     })
-    @IsArray()
-    @ValidateNested({ each: true })
-    @Type(() => TripPointScheduleDto)
-    returnPoints!: TripPointScheduleDto[];
+    @IsEnum(RouteScheduleType)
+    scheduleType!: RouteScheduleType;
 }

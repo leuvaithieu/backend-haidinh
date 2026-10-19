@@ -1,5 +1,5 @@
 import { IsString, IsNotEmpty, IsInt, IsOptional,Matches } from "class-validator";
-import { ApiProperty } from "@nestjs/swagger";
+import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
 
 export class CreateRoutePointDto{
     @ApiProperty({
@@ -30,8 +30,11 @@ export class CreateRoutePointDto{
     @IsInt()
     sequence!:number;
 
+    @ApiPropertyOptional({
+        example: '10:00',
+        description: 'Giờ tùy chỉnh HH:mm. Nếu bỏ trống, sử dụng giờ mặc định của điểm tuyến.',
+    })
     @IsOptional()
-    @IsString()
     @Matches(/^([01]\d|2[0-3]):[0-5]\d$/)
-    defaultTime?: string;
+    time?: string;
 }

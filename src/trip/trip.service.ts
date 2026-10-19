@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
-import { CreateTripDto, TripPointScheduleDto } from './dto/create-trip.dto';
+import {CreateTripDto, TripPointScheduleDto} from './dto/create-trip.dto';
 import { UpdateTripDto } from './dto/update-trip.dto';
 
 
@@ -8,42 +8,107 @@ import { UpdateTripDto } from './dto/update-trip.dto';
 export class TripService {
     constructor(private prisma:PrismaService){}
 
+    
     private calculatePointTimes(
         points: TripPointScheduleDto[],
         departure: Date,
+        routePoints: {
+            id: string;
+            sequence: number;
+        }[],
+        segments: {
+            fromRoutePointId: string;
+            toRoutePointId: string;
+            travelDurationMinutes: number;
+        }[],
     ): Date[] {
         const result: Date[] = [new Date(departure)];
 
         for (let i = 1; i < points.length; i++) {
-            const [previousHour, previousMinute] =
-                points[i - 1].time.split(':').map(Number);
+            const fromId = points[i - 1].routePointId;
+            const toId = points[i].routePointId;
 
-            const [currentHour, currentMinute] =
-                points[i].time.split(':').map(Number);
-
-            const previousMinutes =
-                previousHour * 60 + previousMinute;
-
-            let currentMinutes =
-                currentHour * 60 + currentMinute;
-
-            if (currentMinutes <= previousMinutes) {
-                currentMinutes += 24 * 60;
-            }
-
-            const difference =
-                currentMinutes - previousMinutes;
-
-            const nextTime = new Date(
-                result[i - 1].getTime() +
-                    difference * 60 * 1000,
+            const fromPoint = routePoints.find(
+                (point) => point.id === fromId,
             );
 
-            result.push(nextTime);
+            const toPoint = routePoints.find(
+                (point) => point.id === toId,
+            );
+
+            if (!fromPoint || !toPoint) {
+                throw new BadRequestException(
+                    'Không tìm thấy điểm tuyến để tính thời gian!',
+                );
+            }
+
+            if (fromPoint.sequence === toPoint.sequence) {
+                throw new BadRequestException(
+                    'Hai điểm liên tiếp không được trùng nhau!',
+                );
+            }
+
+            // Chiều đi: sequence tăng.
+            // Chiều về: sequence giảm.
+            const direction =
+                fromPoint.sequence < toPoint.sequence ? 1 : -1;
+
+            let totalMinutes = 0;
+
+            for (
+                let sequence = fromPoint.sequence;
+                sequence !== toPoint.sequence;
+                sequence += direction
+            ) {
+                const nextSequence = sequence + direction;
+
+                const currentPoint = routePoints.find(
+                    (point) => point.sequence === sequence,
+                );
+
+                const nextPoint = routePoints.find(
+                    (point) => point.sequence === nextSequence,
+                );
+
+                if (!currentPoint || !nextPoint) {
+                    throw new BadRequestException(
+                        'Thứ tự hai điểm không liên tục!',
+                    );
+                }
+
+                // Tìm chặng theo cả hai hướng, chỉ cần lưu một lần.
+                const segment = segments.find(
+                    (item) =>
+                        (
+                            item.fromRoutePointId === currentPoint.id &&
+                            item.toRoutePointId === nextPoint.id
+                        ) ||
+                        (
+                            item.fromRoutePointId === nextPoint.id &&
+                            item.toRoutePointId === currentPoint.id
+                        ),
+                );
+
+                if (!segment) {
+                    throw new BadRequestException(
+                        `Chưa cấu hình thời gian chặng ${currentPoint.id} - ${nextPoint.id}!`,
+                    );
+                }
+
+                totalMinutes += segment.travelDurationMinutes;
+            }
+
+            result.push(
+                new Date(
+                    result[i - 1].getTime() +
+                        totalMinutes * 60 * 1000,
+                ),
+            );
         }
 
         return result;
     }
+
 
     private shiftScheduleTimes(
         currentTimes:Date[],
@@ -232,9 +297,27 @@ export class TripService {
             throw new BadRequestException('Không tìm thấy tuyến xe !')
         };
 
+        const segments = await this.prisma.routeSegment.findMany({
+            where:{
+                routeId: data.routeId,
+                scheduleType: data.scheduleType,
+            },
+            select:{
+                fromRoutePointId:true,
+                toRoutePointId:true,
+                travelDurationMinutes:true,
+            }
+        })
+
         if(route.routePoints.length < 2){
             throw new BadRequestException('Tuyến xe phải có ít nhất hai điểm tuyến !');
         };
+
+        if(
+            data.outboundPoints.length < 2 || data.returnPoints.length < 2
+        ){
+            throw new BadRequestException('Lịch trình mỗi chiều phải có ít nhất 2 điểm !')
+        }
 
         const routePointIds = route.routePoints.map((point) =>point.id);
 
@@ -302,30 +385,37 @@ export class TripService {
             throw new BadRequestException('Thứ tự điểm tuyến chiều về không hợp lệ!');
         }
         
+        const outboundSchedulePoints = data.outboundPoints;
+        const returnSchedulePoints = data.returnPoints;
+        
+
         const outboundTimes = this.calculatePointTimes(
-            data.outboundPoints,
+            outboundSchedulePoints,
             new Date(data.plannedDeparture),
+            route.routePoints,
+            segments,
+        );
+        const returnTimes = this.calculatePointTimes(
+            returnSchedulePoints,
+            new Date(data.returnPlannedDeparture),
+            route.routePoints,
+            segments
         );
 
-        const returnTimes = this.calculatePointTimes(
-            data.returnPoints,
-            new Date(data.returnPlannedDeparture),
-        )
-
-        const outboundFirstTime = data.outboundPoints[0].time;
-        const returnFirstTime = data.returnPoints[0].time;
+        const outboundFirstTime = outboundSchedulePoints[0].time;
+        const returnFirstTime = returnSchedulePoints[0].time;
 
         const formatTime = (date :Date)=>
             `${String((date.getUTCHours() + 7) % 24).padStart(2,'0')}:${String(
                 date.getUTCMinutes(),
             ).padStart(2,'0')}`;
 
-        if(outboundFirstTime !== formatTime(new Date(data.plannedDeparture))){
+        if(outboundFirstTime && outboundFirstTime !== formatTime(new Date(data.plannedDeparture))){
             throw new BadRequestException(
                 'Giờ điểm đầu chiều đi phải trùng giờ xuất phát !'
             );
         }
-        if(returnFirstTime !== formatTime(new Date(data.returnPlannedDeparture))){
+        if(returnFirstTime && returnFirstTime !== formatTime(new Date(data.returnPlannedDeparture))){
             throw new BadRequestException('Giờ điểm đầu chiều về phải trùng giờ xuất phát')
         }
 
@@ -335,12 +425,6 @@ export class TripService {
 
         if (returnDeparture <= outboundLastTime){
             throw new BadRequestException('Giờ xuất phát chiều về phải sau khi xe đến điểm cuối của chiều đi !')
-        }
-
-        if(
-            data.outboundPoints.length < 2 || data.returnPoints.length < 2
-        ){
-            throw new BadRequestException('Lịch trình mỗi chiều phải có ít nhất 2 điểm !')
         }
 
         const newDeparture = new Date(data.plannedDeparture);
@@ -390,6 +474,7 @@ export class TripService {
         return await this.prisma.trip.create({
             data: {
             routeId: data.routeId,
+            scheduleType: data.scheduleType,
             vehicleId: data.vehicleId,
             driver1Id: data.driver1Id,
             driver2Id: data.driver2Id,
@@ -413,6 +498,12 @@ export class TripService {
         
         if(!currentTrip){
             throw new BadRequestException('Không tìm thấy chuyến xe !');
+        }
+
+        if(
+            data.scheduleType !== undefined && data.scheduleType !== currentTrip.scheduleType
+        ){
+            throw new BadRequestException('Không hỗ trợ đổi loại lịch khi cập nhật chuyến xe!')
         }
 
         const vehicleId = data.vehicleId ?? currentTrip.vehicleId;
@@ -555,8 +646,21 @@ export class TripService {
                 id:true,
                 name:true,
                 sequence:true,
+                defaultTime:true,
             }
         });
+
+        const segments = await this.prisma.routeSegment.findMany({
+            where:{
+                routeId: currentTrip.routeId,
+                scheduleType: currentTrip.scheduleType,
+            },
+            select:{
+                fromRoutePointId:true,
+                toRoutePointId:true,
+                travelDurationMinutes:true,
+            }
+        })
 
         const buildScheduleData = (
             points : TripPointScheduleDto[],
@@ -685,7 +789,7 @@ export class TripService {
                     throw new BadRequestException(' Lịch chiều đi phải có ít nhất hai điểm');
                 }
 
-                outboundTimes = this.calculatePointTimes(data.outboundPoints!, newDeparture);
+                outboundTimes = this.calculatePointTimes(data.outboundPoints!, newDeparture, routePoints, segments);
             }
             else{
                 if(currentSchedule.length === 0){
@@ -712,7 +816,7 @@ export class TripService {
                     throw new BadRequestException('Chưa có giờ khởi hành chiều về !')
                 }
 
-                returnTimes = this.calculatePointTimes(data.returnPoints!, newReturnDeparture);
+                returnTimes = this.calculatePointTimes(data.returnPoints!, newReturnDeparture, routePoints, segments);
             }
             else{
                 if(!currentTrip.returnPlannedDeparture || currentReturnSchedule.length === 0){
@@ -758,7 +862,7 @@ export class TripService {
                     returnTimes,
                     'RETURN',
                 )
-                : currentSchedule.map((point, index)=>({
+                : currentReturnSchedule.map((point, index)=>({
                     tripId: id,
                     routePointId: point.routePointId,
                     pointName : point.pointName,
@@ -785,16 +889,13 @@ export class TripService {
 
         const formatTime = (date:Date)=>`${String((date.getUTCHours() + 7) % 24).padStart(2, '0')}:${String(date.getUTCMinutes()).padStart(2, '0')}`;
 
-        if(data.outboundPoints?.length && data.outboundPoints[0].time !== formatTime(newDeparture)){
+        if(data.outboundPoints?.length && data.outboundPoints[0].time && data.outboundPoints[0].time !== formatTime(newDeparture)){
             throw new BadRequestException('Giờ điểm đầu chiều đi phải trùng giờ khởi hành !')
         }
 
-        if(data.returnPoints?.length && newReturnDeparture && data.returnPoints[0].time !== formatTime(newReturnDeparture)){
+        if(data.returnPoints?.length && newReturnDeparture && data.returnPoints[0].time && data.returnPoints[0].time !== formatTime(newReturnDeparture)){
             throw new BadRequestException('Giờ điểm đầu chiều về phải trùng giờ khởi hành chiều về !');
         }
-
-        
-
 
         if(!newArrival){
             throw new BadRequestException('Không thể xác định giờ đến dự kiến của chuyến');
