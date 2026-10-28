@@ -767,6 +767,39 @@ export class TripService {
             }
         }
 
+        //Kiểm tra hai đầu tuyến chiều đi và chiều về 
+        if(outboundPointsProvided){
+            const firstRoutePoint = routePoints[0];
+            const lastRoutePoint = routePoints[routePoints.length -1];
+
+            if(
+                data.outboundPoints![0].routePointId !== firstRoutePoint.id ||
+                data.outboundPoints![data.outboundPoints!.length - 1].routePointId !== lastRoutePoint.id
+            ){
+                throw new BadRequestException('Lịch chiều đi phải bắt đầu tại đầu tuyến và kết thúc tại cuối tuyến !');
+            }
+        }
+
+        if(returnPointsProvided){
+            const firstRoutePoint = routePoints[0];
+            const lastRoutePoint = routePoints[routePoints.length - 1];
+
+            if(
+                data.returnPoints![0].routePointId !== lastRoutePoint.id ||
+                data.returnPoints![data.returnPoints!.length - 1].routePointId !== firstRoutePoint.id
+            ){
+                throw new BadRequestException('Lịch chiều về phải bắt đầu tại cuối tuyến và kết thúc tại đầu tuyến!')
+            }
+        }
+
+        if(outboundPointsProvided && data.outboundPoints!.length < 2){
+            throw new BadRequestException('Lịch chiều đi phải có ít nhất 2 điểm tuyến!');
+        }
+
+        if(returnPointsProvided && data.returnPoints!.length < 2){
+            throw new BadRequestException('Lịch chiều về phải có ít nhất 2 điểm tuyến!');
+        }
+
         if(outboundPointsProvided){
             const outboundIds = data.outboundPoints!.map(
                 (point)=> point.routePointId,

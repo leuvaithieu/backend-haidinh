@@ -22,21 +22,20 @@ model Customer {
   deletedAt    DateTime?
 }
 
-
 model RouteSegment {
   id String @id @default(cuid())
 
-  routeId String
+  routeId          String
   fromRoutePointId String
-  toRoutePointId String
+  toRoutePointId   String
 
-  scheduleType RouteScheduleType @default(NORMAL)
+  scheduleType          RouteScheduleType @default(NORMAL)
   travelDurationMinutes Int
 
   route Route @relation(fields: [routeId], references: [id], onDelete: Cascade)
 
   fromRoutePoint RoutePoint @relation("RouteSegmentFrom", fields: [fromRoutePointId], references: [id], onDelete: Cascade)
-  toRoutePoint RoutePoint @relation("RouteSegmentTo", fields: [toRoutePointId], references: [id], onDelete: Cascade)
+  toRoutePoint   RoutePoint @relation("RouteSegmentTo", fields: [toRoutePointId], references: [id], onDelete: Cascade)
 
   @@unique([routeId, fromRoutePointId, toRoutePointId, scheduleType])
 }
@@ -53,17 +52,17 @@ model Route {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  routePoints RoutePoint[]
-  trips       Trip[]
+  routePoints   RoutePoint[]
+  trips         Trip[]
   routeSegments RouteSegment[]
 }
 
 model RoutePoint {
-  id       String @id @default(cuid())
-  routeId  String
-  name     String
-  sequence Int
-  defaultTime String?
+  id                    String  @id @default(cuid())
+  routeId               String
+  name                  String
+  sequence              Int
+  defaultTime           String?
   travelDurationMinutes Int?
 
   route           Route            @relation(fields: [routeId], references: [id])
@@ -85,9 +84,9 @@ model ServicePoint {
 }
 
 model Vehicle {
-  id           String @id @default(cuid())
-  licensePlate String @unique
-  name         String @unique
+  id           String        @id @default(cuid())
+  licensePlate String        @unique
+  name         String        @unique
   seatCount    Int
   vehicleType  String
   status       VehicleStatus @default(ACTIVE)
@@ -100,12 +99,10 @@ model Vehicle {
   trips     Trip[]
 }
 
-
 enum VehicleStatus {
   ACTIVE
   INACTIVE
 }
-
 
 model Driver {
   id            String    @id @default(cuid())
@@ -188,7 +185,7 @@ model Trip {
   actualDeparture DateTime?
   actualArrival   DateTime?
 
-  status TripStatus @default(SCHEDULED)
+  status       TripStatus        @default(SCHEDULED)
   scheduleType RouteScheduleType @default(NORMAL)
 
   createdById String
@@ -224,4 +221,30 @@ model TripRoutePoint {
 
   @@unique([tripId, direction, sequence])
   @@index([tripId, direction])
+}
+
+enum CmsStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+model Article {
+  id             String    @id @default(cuid())
+  title          String
+  slug           String    @unique
+  excerpt        String?
+  content        String    @db.Text
+  coverImage     String?
+  category       String?
+  tags           String[]  @default([])
+  status         CmsStatus @default(DRAFT)
+  featured       Boolean   @default(false)
+  seoTitle       String?
+  seoDescription String?
+  publishedAt    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([status, publishedAt])
 }

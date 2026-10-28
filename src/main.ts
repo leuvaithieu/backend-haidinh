@@ -1,11 +1,17 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { ValidationPipe } from '@nestjs/common';
+import express from 'express';
+import { join } from 'node:path';
 
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+  app.use(
+    '/uploads',
+    express.static(join(process.cwd(),'uploads')),
+  )
   app.enableCors()
 
   app.useGlobalPipes(
