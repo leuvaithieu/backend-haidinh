@@ -17,8 +17,7 @@ import { UpdateUserDto } from './dto/update-user.dto';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
 
-// @UseGuards(JwtAuthGuard, RolesGuard)
-// @Roles('ADMIN')
+
 @Controller('users')
 export class UserController {
   constructor(private readonly userService: UserService) {}
