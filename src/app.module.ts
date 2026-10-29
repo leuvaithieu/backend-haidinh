@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { ScheduleModule } from '@nestjs/schedule';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { PrismaModule } from './prisma/prisma.module';
@@ -16,10 +17,12 @@ import { RouteSegmentModule } from './route-segment/route-segment.module';
 import { ArticleModule } from './article/article.module';
 import { PublicArticleModule } from './public-article/public-article.module';
 import { UploadModule } from './upload/upload.module';
+import { SeatLayoutModule } from './seat-layout/seat-layout.module';
+import { BookingModule } from './booking/booking.module';
 
 
 @Module({
-  imports: [PrismaModule, CustomerModule, RouteModule,RoutePointModule ,ServicePointModule, VehicleModule, DriverModule, UserModule, AuthModule, AssistantModule, TripModule, RouteSegmentModule, ArticleModule, PublicArticleModule, UploadModule],
+  imports: [ScheduleModule.forRoot(),PrismaModule, CustomerModule, RouteModule,RoutePointModule ,ServicePointModule, VehicleModule, DriverModule, UserModule, AuthModule, AssistantModule, TripModule, RouteSegmentModule, ArticleModule, PublicArticleModule, UploadModule, SeatLayoutModule, BookingModule],
   controllers: [AppController],
   providers: [AppService],
 })

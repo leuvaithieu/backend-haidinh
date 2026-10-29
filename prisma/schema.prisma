@@ -20,6 +20,8 @@ model Customer {
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
   deletedAt    DateTime?
+
+  bookings Booking[]
 }
 
 model RouteSegment {
@@ -96,9 +98,10 @@ model Vehicle {
   inspectionDate   DateTime?
   inspectionExpiry DateTime?
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  trips     Trip[]
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+  trips      Trip[]
+  seatLayout SeatLayout?
 }
 
 enum VehicleStatus {
@@ -182,7 +185,9 @@ model Trip {
   plannedDeparture       DateTime
   returnPlannedDeparture DateTime?
   plannedArrival         DateTime?
-  tripRoutePoints        TripRoutePoint[]
+  ticketPrice            Int       @default(0)
+
+  tripRoutePoints TripRoutePoint[]
 
   actualDeparture DateTime?
   actualArrival   DateTime?
@@ -205,6 +210,9 @@ model Trip {
   assistant2 Assistant? @relation("TripAssistant2", fields: [assistant2Id], references: [id])
 
   createdBy User @relation(fields: [createdById], references: [id])
+
+  bookings  Booking[]
+  tripSeats TripSeat[]
 }
 
 model TripRoutePoint {
@@ -252,25 +260,188 @@ model Article {
 }
 
 model RouteWebsiteContent {
-  id              String   @id @default(cuid())
-  routeId         String   @unique
+  id      String @id @default(cuid())
+  routeId String @unique
 
-  title           String
-  slug            String   @unique
+  title            String
+  slug             String  @unique
   shortDescription String?
-  description     String?
+  description      String?
 
-  imageUrl        String?
-  bannerUrl       String?
+  imageUrl  String?
+  bannerUrl String?
 
-  isPublished     Boolean  @default(false)
-  displayOrder    Int      @default(0)
+  isPublished  Boolean @default(false)
+  displayOrder Int     @default(0)
 
-  seoTitle        String?
-  seoDescription  String?
+  seoTitle       String?
+  seoDescription String?
 
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   route Route @relation(fields: [routeId], references: [id], onDelete: Cascade)
+}
+
+enum SeatType {
+  BERTH
+  SEAT
+  PRIVATE_ROOM
+  OTHER
+}
+
+enum SeatLayoutStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+model SeatLayout {
+  id          String           @id @default(cuid())
+  name        String
+  description String?
+  status      SeatLayoutStatus @default(DRAFT)
+
+  // true: sơ đồ mẫu; false: sơ đồ của xe thực tế
+  isTemplate Boolean @default(false)
+
+  // Sơ đồ của xe thực tế có vehicleId.
+  // Sơ đồ mẫu không cần vehicleId.
+  vehicleId String?  @unique
+  vehicle   Vehicle? @relation(fields: [vehicleId], references: [id], onDelete: Restrict)
+
+  // Ghi nhận sơ đồ nguồn khi sao chép mẫu
+  copiedFromId String?
+  copiedFrom   SeatLayout?  @relation("SeatLayoutCopies", fields: [copiedFromId], references: [id], onDelete: SetNull)
+  copies       SeatLayout[] @relation("SeatLayoutCopies")
+
+  seats Seat[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isTemplate, status])
+  @@index([copiedFromId])
+}
+
+model Seat {
+  id       String     @id @default(cuid())
+  layoutId String
+  layout   SeatLayout @relation(fields: [layoutId], references: [id], onDelete: Cascade)
+
+  code  String
+  label String?
+  type  SeatType @default(BERTH)
+
+  // Tầng và vị trí hiển thị trên sơ đồ
+  level  Int @default(1)
+  row    Int
+  column Int
+
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Trạng thái ghế theo từng chuyến
+  tripSeats TripSeat[]
+
+  @@unique([layoutId, code])
+  @@unique([layoutId, level, row, column])
+  @@index([layoutId, isActive])
+}
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  CANCELLED
+  EXPIRED
+}
+
+enum PaymentStatus {
+  UNPAID
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+}
+
+model Booking {
+  id String @id @default(cuid())
+
+  bookingCode String @unique
+
+  customerId String?
+  customer   Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+
+  tripId String
+  trip   Trip   @relation(fields: [tripId], references: [id], onDelete: Restrict)
+
+  customerName  String
+  customerPhone String
+  customerEmail String?
+
+  status        BookingStatus @default(PENDING)
+  paymentStatus PaymentStatus @default(UNPAID)
+
+  totalAmount   Int @default(0)
+  depositAmount Int @default(0)
+  paidAmount    Int @default(0)
+
+  holdExpiresAt DateTime?
+
+  seats BookingSeat[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tripId, status])
+  @@index([customerPhone])
+  @@index([holdExpiresAt])
+}
+
+model BookingSeat {
+  id String @id @default(cuid())
+
+  bookingId String
+  booking   Booking @relation(fields: [bookingId], references: [id], onDelete: Restrict)
+
+  tripSeatId String
+  tripSeat   TripSeat @relation(fields: [tripSeatId], references: [id], onDelete: Restrict)
+
+  price Int
+
+  createdAt DateTime @default(now())
+
+  @@unique([bookingId, tripSeatId])
+  @@index([tripSeatId])
+}
+
+enum TripSeatStatus {
+  AVAILABLE
+  HELD
+  BOOKED
+}
+
+model TripSeat {
+  id     String @id @default(cuid())
+  tripId String
+  trip   Trip   @relation(fields: [tripId], references: [id], onDelete: Restrict)
+
+  seatId String
+  seat   Seat   @relation(fields: [seatId], references: [id], onDelete: Restrict)
+
+  status          TripSeatStatus @default(AVAILABLE)
+  holdExpiresAt   DateTime?
+  heldByBookingId String?
+
+  bookingSeats BookingSeat[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tripId, seatId])
+  @@index([tripId, status])
+  @@index([holdExpiresAt])
+  @@index([heldByBookingId])
 }

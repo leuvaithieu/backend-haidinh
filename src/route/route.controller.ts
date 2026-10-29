@@ -20,25 +20,27 @@ import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/roles.guard';
 import { Roles } from 'src/auth/roles.decorator';
 
-@UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('routes')
 export class RouteController {
   constructor(private readonly routeService: RouteService) {}
 
-  // Lấy danh sách tuyến
-  @Get()
-  @Roles('ADMIN', 'STAFF')
-  findAll() {
-    return this.routeService.findAll();
-  }
-
+  // API công khai: khách truy cập được các tuyến đã xuất bản
   @Get('website/published')
   findPublishedWebsiteRoutes() {
     return this.routeService.findPublishedWebsiteRoutes();
   }
 
+  // Danh sách tuyến phục vụ quản trị
+  @Get()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'STAFF')
+  findAll() {
+    return this.routeService.findAll();
+  }
+
   // Tạo tuyến vận hành
   @Post()
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('ADMIN', 'STAFF')
   create(@Body() data: CreateRouteDto) {
     return this.routeService.create(data);
@@ -46,6 +48,7 @@ export class RouteController {
 
   // Cập nhật tuyến vận hành
   @Patch(':id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('ADMIN', 'STAFF')
   update(
     @Param('id') id: string,
@@ -56,13 +59,15 @@ export class RouteController {
 
   // Xóa tuyến vận hành
   @Delete(':id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('ADMIN')
   remove(@Param('id') id: string) {
     return this.routeService.remove(id);
   }
 
-  // Tạo nội dung website cho tuyến
+  // Tạo nội dung website
   @Post(':id/website-content')
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('ADMIN')
   createWebsiteContent(
     @Param('id') id: string,
@@ -71,8 +76,9 @@ export class RouteController {
     return this.routeService.createWebsiteContent(id, data);
   }
 
-  // Cập nhật nội dung website cho tuyến
+  // Cập nhật nội dung website
   @Patch(':id/website-content')
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('ADMIN')
   updateWebsiteContent(
     @Param('id') id: string,
