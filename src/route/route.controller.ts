@@ -1,40 +1,83 @@
-import { Body, Controller, Get, Post, UseGuards,Patch,Delete ,Param} from '@nestjs/common';
+
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
+
 import { RouteService } from './route.service';
 import { CreateRouteDto } from './dto/create-route.dto';
+import { UpdateRoute } from './dto/update-route.dto';
+import { CreateRouteWebsiteContentDto } from './dto/create-route-website-content.dto';
+import { UpdateRouteWebsiteContentDto } from './dto/update-route-website-content.dto';
+
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/roles.guard';
 import { Roles } from 'src/auth/roles.decorator';
-import { UpdateRoute } from './dto/update-route.dto';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('routes')
 export class RouteController {
   constructor(private readonly routeService: RouteService) {}
 
+  // Lấy danh sách tuyến
   @Get()
-  @Roles('ADMIN','STAFF')
+  @Roles('ADMIN', 'STAFF')
   findAll() {
     return this.routeService.findAll();
   }
 
+  @Get('website/published')
+  findPublishedWebsiteRoutes() {
+    return this.routeService.findPublishedWebsiteRoutes();
+  }
+
+  // Tạo tuyến vận hành
   @Post()
-  @Roles('ADMIN','STAFF')
+  @Roles('ADMIN', 'STAFF')
   create(@Body() data: CreateRouteDto) {
     return this.routeService.create(data);
   }
 
+  // Cập nhật tuyến vận hành
   @Patch(':id')
-  @Roles('ADMIN','STAFF')
+  @Roles('ADMIN', 'STAFF')
   update(
-    @Param('id') id:string,
-    @Body() data:UpdateRoute
-  ){
-    return this.routeService.update(id, data)
+    @Param('id') id: string,
+    @Body() data: UpdateRoute,
+  ) {
+    return this.routeService.update(id, data);
   }
 
+  // Xóa tuyến vận hành
   @Delete(':id')
   @Roles('ADMIN')
-  remove(@Param('id') id:string){
-    return this.routeService.remove(id)
+  remove(@Param('id') id: string) {
+    return this.routeService.remove(id);
+  }
+
+  // Tạo nội dung website cho tuyến
+  @Post(':id/website-content')
+  @Roles('ADMIN')
+  createWebsiteContent(
+    @Param('id') id: string,
+    @Body() data: CreateRouteWebsiteContentDto,
+  ) {
+    return this.routeService.createWebsiteContent(id, data);
+  }
+
+  // Cập nhật nội dung website cho tuyến
+  @Patch(':id/website-content')
+  @Roles('ADMIN')
+  updateWebsiteContent(
+    @Param('id') id: string,
+    @Body() data: UpdateRouteWebsiteContentDto,
+  ) {
+    return this.routeService.updateWebsiteContent(id, data);
   }
 }

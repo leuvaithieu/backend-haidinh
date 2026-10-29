@@ -55,6 +55,8 @@ model Route {
   routePoints   RoutePoint[]
   trips         Trip[]
   routeSegments RouteSegment[]
+
+  websiteContent RouteWebsiteContent?
 }
 
 model RoutePoint {
@@ -247,4 +249,28 @@ model Article {
   updatedAt      DateTime  @updatedAt
 
   @@index([status, publishedAt])
+}
+
+model RouteWebsiteContent {
+  id              String   @id @default(cuid())
+  routeId         String   @unique
+
+  title           String
+  slug            String   @unique
+  shortDescription String?
+  description     String?
+
+  imageUrl        String?
+  bannerUrl       String?
+
+  isPublished     Boolean  @default(false)
+  displayOrder    Int      @default(0)
+
+  seoTitle        String?
+  seoDescription  String?
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  route Route @relation(fields: [routeId], references: [id], onDelete: Cascade)
 }
