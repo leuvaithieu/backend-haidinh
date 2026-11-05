@@ -1,18 +1,34 @@
 import {
     Injectable,
+    OnModuleInit,
     NotFoundException,
     BadRequestException,
     ConflictException,
 } from '@nestjs/common';
 
-import { PrismaService } from 'src/prisma/prisma.service';
+import { PrismaService } from '../prisma/prisma.service';
 import { CreateSettingDto } from './dto/create-setting.dto';
 import { UpdateSettingDto } from './dto/update-setting.dto';
 import { Prisma } from '@prisma/client';
 
 @Injectable()
-export class SettingsService {
-    constructor(private prisma: PrismaService) {}
+export class SettingsService implements OnModuleInit {
+    constructor(private readonly prisma: PrismaService) {}
+
+    // Tạo cấu hình mặc định nếu database chưa có cấu hình thời gian giữ ghế.
+    async onModuleInit(): Promise<void> {
+        await this.prisma.systemSetting.upsert({
+            where: {
+                key: 'BOOKING_HOLD_MINUTES',
+            },
+            update: {},
+            create: {
+                key: 'BOOKING_HOLD_MINUTES',
+                value: '20',
+                description: 'Thời gian giữ ghế khi khách đặt vé (phút)',
+            },
+        });
+    }
 
     // Lấy toàn bộ cấu hình hệ thống.
     async findAll() {
@@ -61,7 +77,7 @@ export class SettingsService {
 
         const numberValue = Number(value);
 
-        if (!Number.isFinite(numberValue)) {
+        if (!Number.isInteger(numberValue) || numberValue <= 0) {
             return defaultValue;
         }
 
@@ -69,7 +85,7 @@ export class SettingsService {
     }
 
     // Kiểm tra tính hợp lệ của giá trị cấu hình theo từng key.
-    private validateSetting(key: string, value: string) {
+    private validateSetting(key: string, value: string): void {
         if (key === 'BOOKING_HOLD_MINUTES') {
             const minutes = Number(value);
 
@@ -109,7 +125,7 @@ export class SettingsService {
 
     // Cập nhật cấu hình đã tồn tại.
     async update(key: string, data: UpdateSettingDto) {
-        const setting = await this.findOne(key);
+        await this.findOne(key);
 
         if (data.value !== undefined) {
             this.validateSetting(key, data.value);
@@ -128,8 +144,14 @@ export class SettingsService {
         });
     }
 
-    // Xóa cấu hình theo key.
+    // Xóa cấu hình theo key, không cho phép xóa cấu hình giữ ghế mặc định.
     async remove(key: string) {
+        if (key === 'BOOKING_HOLD_MINUTES') {
+            throw new BadRequestException(
+                'Không thể xóa cấu hình thời gian giữ ghế',
+            );
+        }
+
         await this.findOne(key);
 
         return this.prisma.systemSetting.delete({

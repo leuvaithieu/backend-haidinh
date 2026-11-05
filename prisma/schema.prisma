@@ -42,11 +42,6 @@ model RouteSegment {
   @@unique([routeId, fromRoutePointId, toRoutePointId, scheduleType])
 }
 
-enum RouteScheduleType {
-  NORMAL
-  TET
-}
-
 model Route {
   id   String @id @default(cuid())
   name String
@@ -59,6 +54,8 @@ model Route {
   routeSegments RouteSegment[]
 
   websiteContent RouteWebsiteContent?
+
+  pricePolicies RoutePricePolicy[]
 }
 
 model RoutePoint {
@@ -76,6 +73,16 @@ model RoutePoint {
   outgoingSegments RouteSegment[] @relation("RouteSegmentFrom")
   incomingSegments RouteSegment[] @relation("RouteSegmentTo")
 
+  baseForPricePolicies RoutePricePolicy[] @relation("PricePolicyBaseOrigin")
+
+  routePointPrices RoutePointPrice[]
+
+  priceOverridesFrom RoutePriceOverride[] @relation("PriceOverrideFromRoutePoint")
+  priceOverridesTo   RoutePriceOverride[] @relation("PriceOverrideToRoutePoint")
+
+  bookingPickups  BookingSeat[] @relation("BookingSeatPickupRoutePoint")
+  bookingDropoffs BookingSeat[] @relation("BookingSeatDropoffRoutePoint")
+
   @@unique([routeId, sequence])
 }
 
@@ -85,6 +92,14 @@ model ServicePoint {
   name         String
 
   routePoint RoutePoint @relation(fields: [routePointId], references: [id])
+
+  servicePointPrices ServicePointPrice[]
+
+  priceOverridesFrom RoutePriceOverride[] @relation("PriceOverrideFromServicePoint")
+  priceOverridesTo   RoutePriceOverride[] @relation("PriceOverrideToServicePoint")
+
+  bookingPickups  BookingSeat[] @relation("BookingSeatPickupServicePoint")
+  bookingDropoffs BookingSeat[] @relation("BookingSeatDropoffServicePoint")
 }
 
 model Vehicle {
@@ -102,11 +117,6 @@ model Vehicle {
   updatedAt  DateTime    @updatedAt
   trips      Trip[]
   seatLayout SeatLayout?
-}
-
-enum VehicleStatus {
-  ACTIVE
-  INACTIVE
 }
 
 model Driver {
@@ -138,11 +148,6 @@ model Assistant {
   tripAsAssistant2 Trip[] @relation("TripAssistant2")
 }
 
-enum AssistantStatus {
-  ACTIVE
-  INACTIVE
-}
-
 model User {
   id       String  @id @default(cuid())
   username String  @unique
@@ -158,20 +163,6 @@ model User {
   createdTrips Trip[]
 
   confirmedPayments Payment[] @relation("PaymentConfirmedBy")
-}
-
-enum TripStatus {
-  SCHEDULED
-  DEPARTED
-  AT_DESTINATION
-  RETURNING
-  COMPLETED
-  CANCELLED
-}
-
-enum TripDirection {
-  OUTBOUND
-  RETURN
 }
 
 model Trip {
@@ -232,14 +223,11 @@ model TripRoutePoint {
 
   routePoint RoutePoint? @relation(fields: [routePointId], references: [id], onDelete: SetNull)
 
+  bookingPickups  BookingSeat[] @relation("BookingSeatPickupTripRoutePoint")
+  bookingDropoffs BookingSeat[] @relation("BookingSeatDropoffTripRoutePoint")
+
   @@unique([tripId, direction, sequence])
   @@index([tripId, direction])
-}
-
-enum CmsStatus {
-  DRAFT
-  PUBLISHED
-  ARCHIVED
 }
 
 model Article {
@@ -284,19 +272,6 @@ model RouteWebsiteContent {
   updatedAt DateTime @updatedAt
 
   route Route @relation(fields: [routeId], references: [id], onDelete: Cascade)
-}
-
-enum SeatType {
-  BERTH
-  SEAT
-  PRIVATE_ROOM
-  OTHER
-}
-
-enum SeatLayoutStatus {
-  DRAFT
-  ACTIVE
-  ARCHIVED
 }
 
 model SeatLayout {
@@ -354,28 +329,6 @@ model Seat {
   @@index([layoutId, isActive])
 }
 
-enum BookingStatus {
-  PENDING
-  PAYMENT_REVIEW
-  CONFIRMED
-  CANCELLED
-  EXPIRED
-}
-
-enum PaymentStatus {
-  UNPAID
-  PENDING
-  REPORTED
-  PAID
-  FAILED
-  REJECTED
-  REFUNDED
-}
-
-enum PaymentMethod {
-  BANK_TRANSFER
-}
-
 model Booking {
   id String @id @default(cuid())
 
@@ -395,6 +348,8 @@ model Booking {
   paymentStatus PaymentStatus @default(UNPAID)
 
   payments Payment[]
+
+  direction TripDirection @default(OUTBOUND)
 
   totalAmount   Int @default(0)
   depositAmount Int @default(0)
@@ -418,18 +373,45 @@ model BookingSeat {
   bookingId String
   booking   Booking @relation(fields: [bookingId], references: [id], onDelete: Restrict)
 
-  tripSeatId String
-  tripSeat   TripSeat @relation(fields: [tripSeatId], references: [id], onDelete: Restrict)
+  // Liên kết với lần phân bổ ghế trên chuyến.
+  seatAllocationId String         @unique
+  seatAllocation   SeatAllocation @relation(fields: [seatAllocationId], references: [id], onDelete: Restrict)
 
   price Int
+
+  // Điểm đón và trả theo dữ liệu tuyến gốc.
+  pickupRoutePointId String?
+  pickupRoutePoint   RoutePoint? @relation("BookingSeatPickupRoutePoint", fields: [pickupRoutePointId], references: [id], onDelete: SetNull)
+
+  dropoffRoutePointId String?
+  dropoffRoutePoint   RoutePoint? @relation("BookingSeatDropoffRoutePoint", fields: [dropoffRoutePointId], references: [id], onDelete: SetNull)
+
+  pickupServicePointId String?
+  pickupServicePoint   ServicePoint? @relation("BookingSeatPickupServicePoint", fields: [pickupServicePointId], references: [id], onDelete: SetNull)
+
+  dropoffServicePointId String?
+  dropoffServicePoint   ServicePoint? @relation("BookingSeatDropoffServicePoint", fields: [dropoffServicePointId], references: [id], onDelete: SetNull)
+
+  // Điểm đón và trả thực tế trong lịch trình của chuyến.
+  pickupTripRoutePointId String?
+  pickupTripRoutePoint   TripRoutePoint? @relation("BookingSeatPickupTripRoutePoint", fields: [pickupTripRoutePointId], references: [id], onDelete: Restrict)
+
+  dropoffTripRoutePointId String?
+  dropoffTripRoutePoint   TripRoutePoint? @relation("BookingSeatDropoffTripRoutePoint", fields: [dropoffTripRoutePointId], references: [id], onDelete: Restrict)
+
+  pricePolicyId String?
+  pricePolicy   RoutePricePolicy? @relation(fields: [pricePolicyId], references: [id], onDelete: Restrict)
+
+  // Lưu lại giá và phụ phí tại thời điểm khách đặt vé.
+  priceSnapshot Json?
 
   passengerName  String?
   passengerPhone String?
 
   createdAt DateTime @default(now())
 
-  @@unique([bookingId, tripSeatId])
-  @@index([tripSeatId])
+  @@index([bookingId])
+  @@index([pricePolicyId])
 }
 
 model Payment {
@@ -470,12 +452,6 @@ model Payment {
   @@index([transactionCode])
 }
 
-enum TripSeatStatus {
-  AVAILABLE
-  HELD
-  BOOKED
-}
-
 model TripSeat {
   id     String @id @default(cuid())
   tripId String
@@ -488,7 +464,7 @@ model TripSeat {
   holdExpiresAt   DateTime?
   heldByBookingId String?
 
-  bookingSeats BookingSeat[]
+  seatAllocations SeatAllocation[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -507,4 +483,251 @@ model SystemSetting {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model RoutePricePolicy {
+  id String @id @default(cuid())
+
+  routeId String
+  route   Route  @relation(fields: [routeId], references: [id], onDelete: Restrict)
+
+  // Điểm xuất phát chính của chính sách giá.
+  baseOriginRoutePointId String
+  baseOriginRoutePoint   RoutePoint @relation("PricePolicyBaseOrigin", fields: [baseOriginRoutePointId], references: [id], onDelete: Restrict)
+
+  // Chiều chạy của bảng giá.
+  direction TripDirection
+
+  // null: áp dụng chung mọi loại xe.
+  // Có giá trị: áp dụng riêng cho loại xe đó.
+  vehicleType String?
+
+  version Int @default(1)
+
+  status PricePolicyStatus @default(DRAFT)
+
+  effectiveFrom DateTime
+  effectiveTo   DateTime?
+
+  // Phụ phí mặc định của chính sách.
+  fuelSurcharge    Int @default(0)
+  serviceSurcharge Int @default(0)
+
+  routePointPrices   RoutePointPrice[]
+  servicePointPrices ServicePointPrice[]
+  priceOverrides     RoutePriceOverride[]
+
+  bookingSeats BookingSeat[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([routeId, direction, status])
+  @@index([routeId, vehicleType])
+  @@index([effectiveFrom, effectiveTo])
+}
+
+//Giá theo RoutePoint
+model RoutePointPrice {
+  id String @id @default(cuid())
+
+  policyId String
+  policy   RoutePricePolicy @relation(fields: [policyId], references: [id], onDelete: Cascade)
+
+  routePointId String
+  routePoint   RoutePoint @relation(fields: [routePointId], references: [id], onDelete: Restrict)
+
+  priceType PriceEntryType @default(CONTACT)
+  price     Int?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([policyId, routePointId])
+  @@index([routePointId])
+}
+
+//Giá theo servicepoint
+model ServicePointPrice {
+  id String @id @default(cuid())
+
+  policyId String
+  policy   RoutePricePolicy @relation(fields: [policyId], references: [id], onDelete: Cascade)
+
+  servicePointId String
+  servicePoint   ServicePoint @relation(fields: [servicePointId], references: [id], onDelete: Restrict)
+
+  priceType PriceEntryType @default(CONTACT)
+  price     Int?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([policyId, servicePointId])
+  @@index([servicePointId])
+}
+
+//Giá theo cặp điểm lên - xuống
+model RoutePriceOverride {
+  id String @id @default(cuid())
+
+  policyId String
+  policy   RoutePricePolicy @relation(fields: [policyId], references: [id], onDelete: Cascade)
+
+  fromPointType PricePointType
+  toPointType   PricePointType
+
+  // RP:<id> hoặc SP:<id>.
+  // Dùng key để bảo đảm không tạo trùng cặp điểm.
+  fromPointKey String
+  toPointKey   String
+
+  fromRoutePointId String?
+  fromRoutePoint   RoutePoint? @relation("PriceOverrideFromRoutePoint", fields: [fromRoutePointId], references: [id], onDelete: Restrict)
+
+  fromServicePointId String?
+  fromServicePoint   ServicePoint? @relation("PriceOverrideFromServicePoint", fields: [fromServicePointId], references: [id], onDelete: Restrict)
+
+  toRoutePointId String?
+  toRoutePoint   RoutePoint? @relation("PriceOverrideToRoutePoint", fields: [toRoutePointId], references: [id], onDelete: Restrict)
+
+  toServicePointId String?
+  toServicePoint   ServicePoint? @relation("PriceOverrideToServicePoint", fields: [toServicePointId], references: [id], onDelete: Restrict)
+
+  priceType PriceEntryType @default(CONTACT)
+  price     Int?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([policyId, fromPointKey, toPointKey])
+  @@index([policyId])
+}
+
+model SeatAllocation {
+  id String @id @default(cuid())
+
+  tripSeatId String
+  tripSeat   TripSeat @relation(fields: [tripSeatId], references: [id], onDelete: Restrict)
+
+  // Chiều chạy của ghế.
+  direction TripDirection
+
+  // Khoảng đường ghế được sử dụng: pickupSequence -> dropoffSequence.
+  pickupSequence  Int
+  dropoffSequence Int
+
+  // HELD: đang giữ chỗ; BOOKED: đã xác nhận.
+  // RELEASED: đã giải phóng; EXPIRED: hết hạn giữ chỗ.
+  status SeatAllocationStatus @default(HELD)
+
+  holdExpiresAt DateTime?
+
+  bookingSeat BookingSeat?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tripSeatId, direction, status])
+  @@index([holdExpiresAt])
+}
+
+//Nơi khai báo enum
+enum RouteScheduleType {
+  NORMAL
+  TET
+}
+
+enum VehicleStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum AssistantStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum TripStatus {
+  SCHEDULED
+  DEPARTED
+  AT_DESTINATION
+  RETURNING
+  COMPLETED
+  CANCELLED
+}
+
+enum TripDirection {
+  OUTBOUND
+  RETURN
+}
+
+enum CmsStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum SeatType {
+  BERTH
+  SEAT
+  PRIVATE_ROOM
+  OTHER
+}
+
+enum SeatLayoutStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+enum BookingStatus {
+  PENDING
+  PAYMENT_REVIEW
+  CONFIRMED
+  CANCELLED
+  EXPIRED
+}
+
+enum PaymentStatus {
+  UNPAID
+  PENDING
+  REPORTED
+  PAID
+  FAILED
+  REJECTED
+  REFUNDED
+}
+
+enum PaymentMethod {
+  BANK_TRANSFER
+}
+
+enum TripSeatStatus {
+  AVAILABLE
+  HELD
+  BOOKED
+}
+
+enum PricePolicyStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+enum PriceEntryType {
+  FIXED
+  CONTACT
+}
+
+enum PricePointType {
+  ROUTE_POINT
+  SERVICE_POINT
+}
+
+enum SeatAllocationStatus {
+  HELD
+  BOOKED
+  RELEASED
+  EXPIRED
 }
