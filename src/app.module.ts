@@ -19,10 +19,11 @@ import { PublicArticleModule } from './public-article/public-article.module';
 import { UploadModule } from './upload/upload.module';
 import { SeatLayoutModule } from './seat-layout/seat-layout.module';
 import { BookingModule } from './booking/booking.module';
+import { SettingsModule } from './settings/settings.module';
 
 
 @Module({
-  imports: [ScheduleModule.forRoot(),PrismaModule, CustomerModule, RouteModule,RoutePointModule ,ServicePointModule, VehicleModule, DriverModule, UserModule, AuthModule, AssistantModule, TripModule, RouteSegmentModule, ArticleModule, PublicArticleModule, UploadModule, SeatLayoutModule, BookingModule],
+  imports: [ScheduleModule.forRoot(),PrismaModule, CustomerModule, RouteModule,RoutePointModule ,ServicePointModule, VehicleModule, DriverModule, UserModule, AuthModule, AssistantModule, TripModule, RouteSegmentModule, ArticleModule, PublicArticleModule, UploadModule, SeatLayoutModule, BookingModule, SettingsModule],
   controllers: [AppController],
   providers: [AppService],
 })

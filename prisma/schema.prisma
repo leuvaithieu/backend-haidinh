@@ -152,9 +152,12 @@ model User {
   role     String  @default("STAFF")
   status   String  @default("ACTIVE")
 
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
   createdTrips Trip[]
+
+  confirmedPayments Payment[] @relation("PaymentConfirmedBy")
 }
 
 enum TripStatus {
@@ -353,6 +356,7 @@ model Seat {
 
 enum BookingStatus {
   PENDING
+  PAYMENT_REVIEW
   CONFIRMED
   CANCELLED
   EXPIRED
@@ -361,9 +365,15 @@ enum BookingStatus {
 enum PaymentStatus {
   UNPAID
   PENDING
+  REPORTED
   PAID
   FAILED
+  REJECTED
   REFUNDED
+}
+
+enum PaymentMethod {
+  BANK_TRANSFER
 }
 
 model Booking {
@@ -383,6 +393,8 @@ model Booking {
 
   status        BookingStatus @default(PENDING)
   paymentStatus PaymentStatus @default(UNPAID)
+
+  payments Payment[]
 
   totalAmount   Int @default(0)
   depositAmount Int @default(0)
@@ -411,10 +423,51 @@ model BookingSeat {
 
   price Int
 
+  passengerName  String?
+  passengerPhone String?
+
   createdAt DateTime @default(now())
 
   @@unique([bookingId, tripSeatId])
   @@index([tripSeatId])
+}
+
+model Payment {
+  id String @id @default(cuid())
+
+  bookingId String
+  booking   Booking @relation(fields: [bookingId], references: [id], onDelete: Restrict)
+
+  amount Int
+
+  method PaymentMethod @default(BANK_TRANSFER)
+  status PaymentStatus @default(PENDING)
+
+  // Mã giao dịch ngân hàng
+  transactionCode String?
+
+  // Nội dung chuyển khoản
+  transferContent String?
+
+  // Thời điểm khách báo đã chuyển khoản
+  reportedAt DateTime?
+
+  // Thời điểm nhân viên xác nhận
+  confirmedAt DateTime?
+
+  // Nhân viên xác nhận giao dịch
+  confirmedById String?
+  confirmedBy   User?   @relation("PaymentConfirmedBy", fields: [confirmedById], references: [id], onDelete: SetNull)
+
+  // Lý do từ chối giao dịch
+  rejectionReason String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([bookingId])
+  @@index([status])
+  @@index([transactionCode])
 }
 
 enum TripSeatStatus {
@@ -444,4 +497,14 @@ model TripSeat {
   @@index([tripId, status])
   @@index([holdExpiresAt])
   @@index([heldByBookingId])
+}
+
+model SystemSetting {
+  id          String  @id @default(cuid())
+  key         String  @unique
+  value       String
+  description String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
