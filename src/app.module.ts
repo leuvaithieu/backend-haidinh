@@ -20,10 +20,11 @@ import { UploadModule } from './upload/upload.module';
 import { SeatLayoutModule } from './seat-layout/seat-layout.module';
 import { BookingModule } from './booking/booking.module';
 import { SettingsModule } from './settings/settings.module';
+import { PaymentModule } from './payment/payment.module';
 
 
 @Module({
-  imports: [ScheduleModule.forRoot(),PrismaModule, CustomerModule, RouteModule,RoutePointModule ,ServicePointModule, VehicleModule, DriverModule, UserModule, AuthModule, AssistantModule, TripModule, RouteSegmentModule, ArticleModule, PublicArticleModule, UploadModule, SeatLayoutModule, BookingModule, SettingsModule],
+  imports: [ScheduleModule.forRoot(),PrismaModule, CustomerModule, RouteModule,RoutePointModule ,ServicePointModule, VehicleModule, DriverModule, UserModule, AuthModule, AssistantModule, TripModule, RouteSegmentModule, ArticleModule, PublicArticleModule, UploadModule, SeatLayoutModule, BookingModule, SettingsModule,PaymentModule],
   controllers: [AppController],
   providers: [AppService],
 })

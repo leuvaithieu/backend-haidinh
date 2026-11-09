@@ -28,6 +28,30 @@ export class SettingsService implements OnModuleInit {
                 description: 'Thời gian giữ ghế khi khách đặt vé (phút)',
             },
         });
+
+        await this.prisma.systemSetting.upsert({
+            where: {
+                key: 'MIN_DEPOSIT_AMOUNT',
+            },
+            update: {},
+            create: {
+                key: 'MIN_DEPOSIT_AMOUNT',
+                value: '300000',
+                description: 'Số tiền đặt cọc tối thiểu khi khách đặt vé (VND)',
+            },
+        });
+
+        await this.prisma.systemSetting.upsert({
+            where: {
+                key: 'PAYMENT_REVIEW_TIMEOUT_MINUTES',
+            },
+            update: {},
+            create: {
+                key: 'PAYMENT_REVIEW_TIMEOUT_MINUTES',
+                value: '30',
+                description: 'Thời hạn xử lý giao dịch thanh toán sau khi khách báo chuyển khoản (phút)',
+            },
+        });
     }
 
     // Lấy toàn bộ cấu hình hệ thống.
@@ -64,7 +88,7 @@ export class SettingsService implements OnModuleInit {
         return setting?.value ?? null;
     }
 
-    // Lấy cấu hình dạng số, dùng giá trị mặc định nếu dữ liệu không hợp lệ.
+   // Lấy cấu hình dạng số không âm, dùng giá trị mặc định nếu dữ liệu không hợp lệ.
     async getNumberValue(
         key: string,
         defaultValue: number,
@@ -77,7 +101,7 @@ export class SettingsService implements OnModuleInit {
 
         const numberValue = Number(value);
 
-        if (!Number.isInteger(numberValue) || numberValue <= 0) {
+        if (!Number.isInteger(numberValue) || numberValue < 0) {
             return defaultValue;
         }
 
@@ -92,6 +116,26 @@ export class SettingsService implements OnModuleInit {
             if (!Number.isInteger(minutes) || minutes <= 0) {
                 throw new BadRequestException(
                     'Thời gian giữ ghế phải là số nguyên lớn hơn 0',
+                );
+            }
+        }
+
+        if (key === 'MIN_DEPOSIT_AMOUNT') {
+            const amount = Number(value);
+
+            if (!Number.isInteger(amount) || amount < 0) {
+                throw new BadRequestException(
+                    'Số tiền đặt cọc tối thiểu phải là số nguyên không âm',
+                );
+            }
+        }
+
+        if (key === 'PAYMENT_REVIEW_TIMEOUT_MINUTES') {
+            const minutes = Number(value);
+
+            if (!Number.isInteger(minutes) || minutes <= 0) {
+                throw new BadRequestException(
+                    'Thời hạn xác nhận thanh toán phải là số nguyên lớn hơn 0',
                 );
             }
         }
@@ -146,9 +190,13 @@ export class SettingsService implements OnModuleInit {
 
     // Xóa cấu hình theo key, không cho phép xóa cấu hình giữ ghế mặc định.
     async remove(key: string) {
-        if (key === 'BOOKING_HOLD_MINUTES') {
+       if (
+            key === 'BOOKING_HOLD_MINUTES' ||
+            key === 'MIN_DEPOSIT_AMOUNT' ||
+            key === 'PAYMENT_REVIEW_TIMEOUT_MINUTES'
+        ) {
             throw new BadRequestException(
-                'Không thể xóa cấu hình thời gian giữ ghế',
+                'Không thể xóa cấu hình hệ thống mặc định',
             );
         }
 

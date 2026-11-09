@@ -184,14 +184,26 @@ export class TripService {
 
     async create(data: CreateTripDto, userId: string) {
         const vehicle = await this.prisma.vehicle.findUnique({
-            where:{
-                id: data.vehicleId,
-            },
-            select:{
-                id:true,
-                name:true,
-                licensePlate:true,
-                status:true,
+            where: { id: data.vehicleId },
+            include: {
+                seatLayout: {
+                    include: {
+                        seats: {
+                            where: {
+                                isActive: true,
+                            },
+                            orderBy: [
+                                { level: 'asc' },
+                                { row: 'asc' },
+                                { column: 'asc' },
+                            ],
+                            select: {
+                                id: true,
+                                code: true,
+                            },
+                        },
+                    },
+                },
             },
         });
         
@@ -204,6 +216,18 @@ export class TripService {
             throw new BadRequestException(
                 `Xe ${vehicle.name} - ${vehicle.licensePlate} đang ngừng hoạt động, không thể phân công chuyến !`
             )
+        }
+
+        // Kiểm tra sơ đồ ghế của xe trước khi tạo chuyến.
+        if (
+            !vehicle.seatLayout ||
+            vehicle.seatLayout.status !== 'ACTIVE' ||
+            vehicle.seatLayout.isTemplate ||
+            vehicle.seatLayout.seats.length === 0
+        ) {
+            throw new BadRequestException(
+                'Xe chưa có sơ đồ ghế hoạt động hoặc sơ đồ ghế không có ghế hợp lệ',
+            );
         }
 
         const drivers = await this.prisma.driver.findMany({
@@ -513,18 +537,24 @@ export class TripService {
 
         return await this.prisma.trip.create({
             data: {
-            routeId: data.routeId,
-            scheduleType: data.scheduleType,
-            vehicleId: data.vehicleId,
-            driver1Id: data.driver1Id,
-            driver2Id: data.driver2Id,
-            assistant1Id: data.assistant1Id,
-            assistant2Id: data.assistant2Id ?? null,
-            plannedDeparture: new Date(data.plannedDeparture),
-            returnPlannedDeparture : new Date(data.returnPlannedDeparture),
-            plannedArrival : returnTimes[returnTimes.length - 1],
-            tripRoutePoints:{create:[...outboundSchedule, ...returnSchedule]},
-            createdById: userId,
+                routeId: data.routeId,
+                scheduleType: data.scheduleType,
+                vehicleId: data.vehicleId,
+                driver1Id: data.driver1Id,
+                driver2Id: data.driver2Id,
+                assistant1Id: data.assistant1Id,
+                assistant2Id: data.assistant2Id ?? null,
+                plannedDeparture: new Date(data.plannedDeparture),
+                returnPlannedDeparture : new Date(data.returnPlannedDeparture),
+                plannedArrival : returnTimes[returnTimes.length - 1],
+                tripRoutePoints:{create:[...outboundSchedule, ...returnSchedule]},
+                // Tạo danh sách ghế cho chuyến từ các ghế đang hoạt động của xe.
+                tripSeats: {
+                    create: vehicle.seatLayout.seats.map((seat) => ({
+                        seatId: seat.id,
+                    })),
+                },
+                createdById: userId,
             },
         });
     }
@@ -551,11 +581,21 @@ export class TripService {
             where: {
                 id: vehicleId,
             },
-            select: {
-                id: true,
-                name: true,
-                licensePlate: true,
-                status: true,
+            include: {
+                seatLayout: {
+                    include: {
+                        seats: {
+                            where: {
+                                isActive: true,
+                            },
+                            orderBy: [
+                                { level: 'asc' },
+                                { row: 'asc' },
+                                { column: 'asc' },
+                            ],
+                        },
+                    },
+                },
             },
         });
 
@@ -566,6 +606,17 @@ export class TripService {
         if (vehicle.status !== 'ACTIVE') {
             throw new BadRequestException(
                 `Xe ${vehicle.name} - ${vehicle.licensePlate} đang ngừng hoạt động, không thể phân công chuyến!`,
+            );
+        }
+
+        if (
+            !vehicle.seatLayout ||
+            vehicle.seatLayout.status !== 'ACTIVE' ||
+            vehicle.seatLayout.isTemplate ||
+            vehicle.seatLayout.seats.length === 0
+        ) {
+            throw new BadRequestException(
+                'Xe chưa có sơ đồ ghế hoạt động hợp lệ!',
             );
         }
 
@@ -1119,8 +1170,55 @@ export class TripService {
             throw new BadRequestException('Không xác định được thời gian đến cuối hành trình!');
         }
 
-        // Cập nhật chuyến xe và lịch trình trong cùng transaction.
         return this.prisma.$transaction(async (tx) => {
+            // Kiểm tra chuyến đã phát sinh booking hoặc phân bổ ghế chưa.
+            const [bookingCount, seatAllocationCount] = await Promise.all([
+                tx.booking.count({
+                    where: { tripId: id },
+                }),
+                tx.seatAllocation.count({
+                    where: {
+                        tripSeat: {
+                            tripId: id,
+                        },
+                    },
+                }),
+            ]);
+
+            const hasBookingData = bookingCount > 0 || seatAllocationCount > 0;
+            const isVehicleChanged = vehicleId !== currentTrip.vehicleId;
+
+            // Không cho đổi xe hoặc lịch trình khi chuyến đã có dữ liệu đặt vé.
+            if (hasBookingData && isVehicleChanged) {
+                throw new BadRequestException(
+                    'Không thể đổi xe vì chuyến đã phát sinh dữ liệu đặt vé!',
+                );
+            }
+
+            if (hasBookingData && (shouldUpdateOutbound || shouldUpdateReturn)) {
+                throw new BadRequestException(
+                    'Không thể thay đổi lịch trình vì chuyến đã phát sinh dữ liệu đặt vé!',
+                );
+            }
+
+            // Đồng bộ danh sách ghế khi chuyến được đổi sang xe khác.
+            if (isVehicleChanged) {
+                // Xóa danh sách ghế cũ của chuyến.
+                await tx.tripSeat.deleteMany({
+                    where: {
+                        tripId: id,
+                    },
+                });
+
+                // Tạo danh sách ghế mới theo sơ đồ xe được phân công.
+                await tx.tripSeat.createMany({
+                    data: vehicle.seatLayout!.seats.map((seat) => ({
+                        tripId: id,
+                        seatId: seat.id,
+                    })),
+                });
+            }
+
             const updatedTrip = await tx.trip.update({
                 where: { id },
                 data: {
@@ -1179,11 +1277,53 @@ export class TripService {
     }
 
 
-    async remove(id:string){
-        return this.prisma.trip.delete({
-            where:{
-                id,
+   // Xóa chuyến xe khi chuyến chưa phát sinh dữ liệu đặt vé hoặc phân bổ ghế.
+    async remove(id: string) {
+        return this.prisma.$transaction(async (tx) => {
+            // Kiểm tra chuyến có tồn tại không.
+            const trip = await tx.trip.findUnique({
+                where: { id },
+            });
+
+            if (!trip) {
+                throw new BadRequestException('Không tìm thấy chuyến xe!');
             }
-        })
+
+            // Kiểm tra booking và phân bổ ghế của chuyến.
+            const [bookingCount, seatAllocationCount] = await Promise.all([
+                tx.booking.count({
+                    where: { tripId: id },
+                }),
+                tx.seatAllocation.count({
+                    where: {
+                        tripSeat: {
+                            tripId: id,
+                        },
+                    },
+                }),
+            ]);
+
+            if (bookingCount > 0) {
+                throw new BadRequestException(
+                    'Không thể xóa chuyến xe đã phát sinh dữ liệu đặt vé!',
+                );
+            }
+
+            if (seatAllocationCount > 0) {
+                throw new BadRequestException(
+                    'Không thể xóa chuyến xe còn dữ liệu phân bổ ghế!',
+                );
+            }
+
+            // Xóa danh sách ghế thuộc chuyến trước.
+            await tx.tripSeat.deleteMany({
+                where: { tripId: id },
+            });
+
+            // Xóa chuyến xe.
+            return tx.trip.delete({
+                where: { id },
+            });
+        });
     }
 }

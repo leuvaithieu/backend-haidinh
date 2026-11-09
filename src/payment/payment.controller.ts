@@ -1,0 +1,73 @@
+import {
+  Body,
+  Controller,
+  Param,
+  Patch,
+  Get,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
+
+import { PaymentService } from './payment.service';
+import { ReportPaymentDto } from './dto/report-payment.dto';
+import { RejectPaymentDto } from './dto/reject-payment.dto';
+
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { RolesGuard } from '../auth/roles.guard';
+import { Roles } from '../auth/roles.decorator';
+import { CurrentUser } from '../auth/current-user.decorator';
+
+@Controller('payments')
+export class PaymentController {
+  constructor(private readonly paymentService: PaymentService) {}
+
+  // Tiếp nhận thông tin khách hàng báo đã chuyển khoản cho booking.
+    @Post('bookings/:bookingId/report')
+    async reportPayment(
+        @Param('bookingId') bookingId: string,
+        @Body() dto: ReportPaymentDto,
+    ) {
+        return this.paymentService.reportPayment(bookingId, dto);
+    }
+
+    // Lấy danh sách giao dịch đang chờ nhân viên xác nhận.
+    @Get('reported')
+    @UseGuards(JwtAuthGuard, RolesGuard)
+    @Roles('ADMIN', 'STAFF')
+    async findReportedPayments() {
+        return this.paymentService.findReportedPayments();
+    }
+
+    // Lấy chi tiết giao dịch thanh toán dành cho nhân viên quản lý.
+    @Get(':paymentId')
+    @UseGuards(JwtAuthGuard, RolesGuard)
+    @Roles('ADMIN', 'STAFF')
+    async findOne( @Param('paymentId') paymentId: string,) {
+        return this.paymentService.findOne(paymentId);
+    }
+
+    // Nhân viên xác nhận giao dịch sau khi kiểm tra tiền đã vào tài khoản.
+    @Patch(':paymentId/confirm')
+    @UseGuards(JwtAuthGuard, RolesGuard)
+    @Roles('ADMIN', 'STAFF')
+    async confirmPayment(
+        @Param('paymentId') paymentId: string,
+        @CurrentUser() user: { userId: string },
+    ) {
+        return this.paymentService.confirmPayment(
+        paymentId,
+        user.userId,
+        );
+    }
+
+    // Nhân viên từ chối giao dịch và cung cấp lý do từ chối.
+    @Patch(':paymentId/reject')
+    @UseGuards(JwtAuthGuard, RolesGuard)
+    @Roles('ADMIN', 'STAFF')
+    async rejectPayment(
+        @Param('paymentId') paymentId: string,
+        @Body() dto: RejectPaymentDto,
+    ) {
+        return this.paymentService.rejectPayment(paymentId, dto);
+    }
+}

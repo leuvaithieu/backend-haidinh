@@ -1,3 +1,4 @@
+
 import {
     BadRequestException,
     ConflictException,
@@ -6,10 +7,13 @@ import {
 } from '@nestjs/common';
 
 import { randomBytes } from 'crypto';
+import { Cron, CronExpression } from '@nestjs/schedule';
+import { Prisma } from '@prisma/client';
+
 import { PrismaService } from '../prisma/prisma.service';
 import { SettingsService } from '../settings/settings.service';
 import { CreateBookingDto } from './dto/create-booking.dto';
-import { Cron, CronExpression } from '@nestjs/schedule';
+import { QueryBookingDto } from './dto/query-booking.dto';
 
 @Injectable()
 export class BookingService {
@@ -18,7 +22,7 @@ export class BookingService {
         private readonly settingsService: SettingsService,
     ) {}
 
-    // Tạo booking mới, kiểm tra giá vé và giữ ghế theo thời gian cấu hình trong hệ thống.
+    // Tạo booking và giữ ghế theo từng đoạn đường trong một transaction.
     async create(dto: CreateBookingDto) {
         const now = new Date();
 
@@ -26,206 +30,442 @@ export class BookingService {
             await this.settingsService.getNumberValue(
                 'BOOKING_HOLD_MINUTES',
                 20,
-            );
+            )
+        ;
 
+        // Lấy mức đặt cọc tối thiểu hiện tại từ cấu hình hệ thống.
+        const minDepositAmount =
+            await this.settingsService.getNumberValue(
+                'MIN_DEPOSIT_AMOUNT',
+                300000,
+            )
+        ;
         const holdExpiresAt = new Date(
             now.getTime() + holdMinutes * 60 * 1000,
         );
 
-        return this.prisma.$transaction(async (tx) => {
-            // 1. Lấy chuyến, xe, sơ đồ ghế và giá vé.
-            const trip = await tx.trip.findUnique({
-                where: { id: dto.tripId },
-                include: {
-                    vehicle: {
+        try {
+            return await this.prisma.$transaction(
+                async (tx) => {
+                    // 1. Lấy thông tin chuyến, xe và sơ đồ ghế.
+                    const trip = await tx.trip.findUnique({
+                        where: {
+                            id: dto.tripId,
+                        },
                         include: {
-                            seatLayout: {
+                            vehicle: {
                                 include: {
-                                    seats: true,
+                                    seatLayout: {
+                                        include: {
+                                            seats: true,
+                                        },
+                                    },
                                 },
                             },
                         },
-                    },
-                },
-            });
+                    });
 
-            if (!trip) {
-                throw new NotFoundException(
-                    'Không tìm thấy chuyến xe',
-                );
-            }
+                    if (!trip) {
+                        throw new NotFoundException(
+                            'Không tìm thấy chuyến xe',
+                        );
+                    }
 
-            // Chỉ cho phép đặt vé khi chuyến vẫn đang ở trạng thái chờ khởi hành.
-            if (trip.status !== 'SCHEDULED') {
-                throw new BadRequestException(
-                    'Chuyến xe hiện không nhận đặt vé',
-                );
-            }
+                    if (trip.status !== 'SCHEDULED') {
+                        throw new BadRequestException(
+                            'Chuyến xe hiện không nhận đặt vé',
+                        );
+                    }
 
-            if (trip.ticketPrice <= 0) {
-                throw new BadRequestException(
-                    'Chuyến xe chưa được cấu hình giá vé',
-                );
-            }
+                    // Tạm sử dụng giá chuyến cũ khi PricingService chưa hoàn thành.
+                    if (trip.ticketPrice <= 0) {
+                        throw new BadRequestException(
+                            'Chuyến xe chưa được cấu hình giá vé',
+                        );
+                    }
 
-            const layout = trip.vehicle.seatLayout;
+                    // 2. Kiểm tra sơ đồ ghế của xe.
+                    const layout = trip.vehicle.seatLayout;
 
-            if (
-                !layout ||
-                layout.status !== 'ACTIVE' ||
-                layout.isTemplate
-            ) {
-                throw new BadRequestException(
-                    'Xe chưa có sơ đồ ghế đang hoạt động',
-                );
-            }
+                    if (
+                        !layout ||
+                        layout.status !== 'ACTIVE' ||
+                        layout.isTemplate
+                    ) {
+                        throw new BadRequestException(
+                            'Xe chưa có sơ đồ ghế đang hoạt động',
+                        );
+                    }
 
-            // 2. Chỉ nhận những ghế đang hoạt động trong sơ đồ xe.
-            const activeSeats = layout.seats.filter(
-                (seat) => seat.isActive,
-            );
-
-            const activeSeatIds = new Set(
-                activeSeats.map((seat) => seat.id),
-            );
-
-            const invalidSeatIds = dto.seatIds.filter(
-                (seatId) => !activeSeatIds.has(seatId),
-            );
-
-            if (invalidSeatIds.length > 0) {
-                throw new BadRequestException(
-                    `Ghế không hợp lệ: ${invalidSeatIds.join(', ')}`,
-                );
-            }
-
-            // 3. Khởi tạo trạng thái ghế cho chuyến nếu chưa có.
-            await tx.tripSeat.createMany({
-                data: activeSeats.map((seat) => ({
-                    tripId: trip.id,
-                    seatId: seat.id,
-                    status: 'AVAILABLE',
-                })),
-                skipDuplicates: true,
-            });
-
-            // 4. Tạo booking tạm trong transaction.
-            // Booking hết hạn được cron xử lý để giải phóng toàn bộ ghế,
-            // tránh đổi trạng thái booking trước nhưng bỏ sót các ghế đang giữ.
-
-            const bookingCode =
-                `HD-${Date.now()}-${randomBytes(3).toString('hex').toUpperCase()}`;
-
-            const totalAmount =
-                dto.seatIds.length * trip.ticketPrice;
-
-            const booking = await tx.booking.create({
-                data: {
-                    bookingCode,
-                    tripId: trip.id,
-                    customerId: dto.customerId,
-                    customerName: dto.customerName,
-                    customerPhone: dto.customerPhone,
-                    customerEmail: dto.customerEmail,
-                    totalAmount,
-                    depositAmount: 0,
-                    paidAmount: 0,
-                    status: 'PENDING',
-                    paymentStatus: 'UNPAID',
-                    holdExpiresAt,
-                },
-            });
-
-            // 5. Giữ từng ghế bằng cập nhật có điều kiện.
-            // Nếu khách khác đã giữ ghế, transaction sẽ bị hủy.
-            const bookingSeats: {
-                bookingId: string;
-                tripSeatId: string;
-                price: number;
-            }[] = [];
-
-            for (const seatId of dto.seatIds) {
-                const tripSeat = await tx.tripSeat.findUnique({
-                    where: {
-                        tripId_seatId: {
-                            tripId: trip.id,
-                            seatId,
-                        },
-                    },
-                });
-
-                if (!tripSeat) {
-                    throw new ConflictException(
-                        `Không tìm thấy trạng thái ghế ${seatId}`,
+                    const activeSeats = layout.seats.filter(
+                        (seat) => seat.isActive,
                     );
-                }
 
-                const result = await tx.tripSeat.updateMany({
-                    where: {
-                        id: tripSeat.id,
-                        OR: [
-                            { status: 'AVAILABLE' },
-                            {
-                                status: 'HELD',
-                                holdExpiresAt: { lte: now },
+                    const activeSeatIds = new Set(
+                        activeSeats.map((seat) => seat.id),
+                    );
+
+                    const requestedSeatIds = dto.seats.map(
+                        (seat) => seat.seatId,
+                    );
+
+                    const invalidSeatIds = requestedSeatIds.filter(
+                        (seatId) => !activeSeatIds.has(seatId),
+                    );
+
+                    if (invalidSeatIds.length > 0) {
+                        throw new BadRequestException(
+                            `Ghế không hợp lệ: ${invalidSeatIds.join(', ')}`,
+                        );
+                    }
+
+                    // 3. Lấy các điểm đón và trả thuộc đúng chuyến, đúng chiều.
+                    const requestedPointIds = [
+                        ...new Set(
+                            dto.seats.flatMap((seat) => [
+                                seat.pickupTripRoutePointId,
+                                seat.dropoffTripRoutePointId,
+                            ]),
+                        ),
+                    ];
+
+                    const tripRoutePoints =
+                        await tx.tripRoutePoint.findMany({
+                            where: {
+                                tripId: trip.id,
+                                direction: dto.direction,
+                                id: {
+                                    in: requestedPointIds,
+                                },
                             },
-                        ],
-                    },
-                    data: {
-                        status: 'HELD',
-                        holdExpiresAt,
-                        heldByBookingId: booking.id,
-                    },
-                });
+                            select: {
+                                id: true,
+                                sequence: true,
+                                routePointId: true,
+                            },
+                        });
 
-                if (result.count !== 1) {
-                    throw new ConflictException(
-                        `Ghế ${seatId} đã được giữ hoặc đã bán`,
+                    if (
+                        tripRoutePoints.length !==
+                        requestedPointIds.length
+                    ) {
+                        throw new BadRequestException(
+                            'Điểm đón hoặc điểm trả không thuộc lịch trình của chuyến hoặc sai chiều',
+                        );
+                    }
+
+                    const pointMap = new Map(
+                        tripRoutePoints.map((point) => [
+                            point.id,
+                            point,
+                        ]),
                     );
-                }
 
-                bookingSeats.push({
-                    bookingId: booking.id,
-                    tripSeatId: tripSeat.id,
-                    price: trip.ticketPrice,
-                });
+                    // Kiểm tra điểm đón phải đứng trước điểm trả.
+                    for (const seat of dto.seats) {
+                        const pickup = pointMap.get(
+                            seat.pickupTripRoutePointId,
+                        );
+
+                        const dropoff = pointMap.get(
+                            seat.dropoffTripRoutePointId,
+                        );
+
+                        if (
+                            !pickup ||
+                            !dropoff ||
+                            pickup.sequence >= dropoff.sequence
+                        ) {
+                            throw new BadRequestException(
+                                'Điểm đón phải nằm trước điểm trả',
+                            );
+                        }
+                    }
+
+                    // 4. Khởi tạo TripSeat nếu ghế chưa có trong chuyến.
+                    await tx.tripSeat.createMany({
+                        data: activeSeats.map((seat) => ({
+                            tripId: trip.id,
+                            seatId: seat.id,
+                            status: 'AVAILABLE',
+                        })),
+                        skipDuplicates: true,
+                    });
+
+                    // Lấy các TripSeat tương ứng với ghế khách chọn.
+                    const tripSeats = await tx.tripSeat.findMany({
+                        where: {
+                            tripId: trip.id,
+                            seatId: {
+                                in: requestedSeatIds,
+                            },
+                        },
+                    });
+
+                    const tripSeatMap = new Map(
+                        tripSeats.map((seat) => [
+                            seat.seatId,
+                            seat,
+                        ]),
+                    );
+
+                    if (
+                        tripSeats.length !== requestedSeatIds.length
+                    ) {
+                        throw new ConflictException(
+                            'Không thể khởi tạo trạng thái ghế cho chuyến',
+                        );
+                    }
+
+                   // Khóa các ghế theo thứ tự ID cố định để tránh hai transaction khóa ngược thứ tự.
+                    const sortedTripSeatIds = tripSeats
+                        .map((seat) => seat.id)
+                        .sort();
+
+                    await tx.$queryRaw<Array<{ id: string }>>`
+                        SELECT "id"
+                        FROM "TripSeat"
+                        WHERE "id" IN (${Prisma.join(sortedTripSeatIds)})
+                        ORDER BY "id"
+                        FOR UPDATE
+                    `;
+
+                    // 5. Xử lý các booking đã hết hạn trước khi giữ ghế mới.
+                    // PAYMENT_REVIEW và CONFIRMED không được tự động giải phóng.
+                    const expiredBookings = await tx.booking.findMany({
+                        where: {
+                            tripId: trip.id,
+                            direction: dto.direction,
+                            status: 'PENDING',
+                            paymentStatus: {
+                                in: ['UNPAID', 'FAILED', 'REJECTED'],
+                            },
+                            holdExpiresAt: {
+                                lte: now,
+                            },
+                        },
+                        select: {
+                            id: true,
+                            seats: {
+                                select: {
+                                    seatAllocationId: true,
+                                },
+                            },
+                        },
+                    });
+
+                    for (const expiredBooking of expiredBookings) {
+                        const expiredBookingResult =
+                            await tx.booking.updateMany({
+                                where: {
+                                    id: expiredBooking.id,
+                                    status: 'PENDING',
+                                    paymentStatus: {
+                                        in: ['UNPAID', 'FAILED', 'REJECTED'],
+                                    },
+                                    holdExpiresAt: {
+                                        lte: now,
+                                    },
+                                },
+                                data: {
+                                    status: 'EXPIRED',
+                                    holdExpiresAt: null,
+                                },
+                            });
+
+                        if (expiredBookingResult.count !== 1) {
+                            continue;
+                        }
+
+                        const allocationIds =
+                            expiredBooking.seats.map(
+                                (seat) => seat.seatAllocationId,
+                            );
+
+                        if (allocationIds.length > 0) {
+                            await tx.seatAllocation.updateMany({
+                                where: {
+                                    id: {
+                                        in: allocationIds,
+                                    },
+                                    status: 'HELD',
+                                },
+                                data: {
+                                    status: 'EXPIRED',
+                                    holdExpiresAt: null,
+                                },
+                            });
+                        }
+                    }
+
+                    // 6. Tạo booking.
+                    const bookingCode =
+                        `HD-${Date.now()}-${randomBytes(3)
+                            .toString('hex')
+                            .toUpperCase()}`
+                    ;
+
+                    const totalAmount =
+                        dto.seats.length * trip.ticketPrice
+                    ;
+
+                    // Mức cọc áp dụng không vượt quá tổng tiền vé của booking.
+                    const requiredDepositAmount = Math.min(
+                        minDepositAmount,
+                        totalAmount,
+                    );
+                    const booking = await tx.booking.create({
+                        data: {
+                            bookingCode,
+                            tripId: trip.id,
+                            customerId: dto.customerId,
+                            customerName: dto.customerName,
+                            customerPhone: dto.customerPhone,
+                            customerEmail: dto.customerEmail,
+                            direction: dto.direction,
+                            totalAmount,
+                            depositAmount: requiredDepositAmount,
+                            paidAmount: 0,
+                            status: 'PENDING',
+                            paymentStatus: 'UNPAID',
+                            holdExpiresAt,
+                        },
+                    });
+
+                    // 7. Tạo SeatAllocation và BookingSeat cho từng ghế.
+                    const createdSeats: {
+                        bookingSeatId: string;
+                        seatId: string;
+                        pickupSequence: number;
+                        dropoffSequence: number;
+                        price: number;
+                    }[] = [];
+
+                    for (const seatDto of dto.seats) {
+                        const tripSeat = tripSeatMap.get(
+                            seatDto.seatId,
+                        );
+
+                        if (!tripSeat) {
+                            throw new ConflictException(
+                                `Không tìm thấy ghế ${seatDto.seatId}`,
+                            );
+                        }
+
+                        const pickup = pointMap.get(
+                            seatDto.pickupTripRoutePointId,
+                        )!;
+
+                        const dropoff = pointMap.get(
+                            seatDto.dropoffTripRoutePointId,
+                        )!;
+
+                        // Tạo lượt phân bổ ghế theo chiều và khoảng đường.
+                        const allocation =
+                            await tx.seatAllocation.create({
+                                data: {
+                                    tripSeatId: tripSeat.id,
+                                    direction: dto.direction,
+                                    pickupSequence: pickup.sequence,
+                                    dropoffSequence: dropoff.sequence,
+                                    status: 'HELD',
+                                    holdExpiresAt,
+                                },
+                            });
+
+                        // Lưu thông tin hành khách và liên kết với SeatAllocation.
+                        const bookingSeat =
+                            await tx.bookingSeat.create({
+                                data: {
+                                    bookingId: booking.id,
+                                    seatAllocationId: allocation.id,
+                                    price: trip.ticketPrice,
+                                    pickupTripRoutePointId:
+                                        pickup.id,
+                                    dropoffTripRoutePointId:
+                                        dropoff.id,
+                                    pickupRoutePointId:
+                                        pickup.routePointId,
+                                    dropoffRoutePointId:
+                                        dropoff.routePointId,
+                                    passengerName:
+                                        seatDto.passengerName,
+                                    passengerPhone:
+                                        seatDto.passengerPhone,
+                                    priceSnapshot: {
+                                        unitPrice: trip.ticketPrice,
+                                        source: 'TRIP_TICKET_PRICE',
+                                    },
+                                },
+                            });
+
+                        createdSeats.push({
+                            bookingSeatId: bookingSeat.id,
+                            seatId: seatDto.seatId,
+                            pickupSequence: pickup.sequence,
+                            dropoffSequence: dropoff.sequence,
+                            price: bookingSeat.price,
+                        });
+                    }
+
+                    // 8. Trả kết quả booking vừa tạo.
+                    return {
+                        message: 'Giữ ghế thành công',
+                        booking: {
+                            id: booking.id,
+                            bookingCode: booking.bookingCode,
+                            tripId: booking.tripId,
+                            direction: booking.direction,
+                            customerName: booking.customerName,
+                            customerPhone: booking.customerPhone,
+                            seats: createdSeats,
+                            totalAmount: booking.totalAmount,
+                            status: booking.status,
+                            paymentStatus: booking.paymentStatus,
+                            holdExpiresAt: booking.holdExpiresAt,
+                        },
+                    };
+                },
+                {
+                    isolationLevel:
+                        Prisma.TransactionIsolationLevel.Serializable,
+                },
+            );
+        } catch (error) {
+            // Chuyển lỗi xung đột transaction hoặc trùng đoạn ghế thành lỗi nghiệp vụ.
+            if (
+                error instanceof Prisma.PrismaClientKnownRequestError &&
+                ['P2004', 'P2034'].includes(error.code)
+            ) {
+                throw new ConflictException(
+                    'Ghế vừa được khách khác giữ trên đoạn đường này. Vui lòng chọn ghế hoặc hành trình khác.',
+                );
             }
 
-            // 6. Lưu danh sách ghế thuộc booking.
-            await tx.bookingSeat.createMany({
-                data: bookingSeats,
-            });
-
-            return {
-                message: 'Giữ ghế thành công',
-                booking: {
-                    id: booking.id,
-                    bookingCode: booking.bookingCode,
-                    tripId: booking.tripId,
-                    customerName: booking.customerName,
-                    customerPhone: booking.customerPhone,
-                    seatIds: dto.seatIds,
-                    totalAmount: booking.totalAmount,
-                    status: booking.status,
-                    paymentStatus: booking.paymentStatus,
-                    holdExpiresAt: booking.holdExpiresAt,
-                },
-            };
-        });
+            throw error;
+        }
     }
 
-    // Lấy chi tiết booking theo ID, kèm thông tin ghế, chuyến và xe.
+    // Lấy chi tiết booking, bao gồm ghế, lượt phân bổ, chuyến và xe.
     async findOne(id: string) {
         const booking = await this.prisma.booking.findUnique({
-            where: { id },
+            where: {
+                id,
+            },
             include: {
                 seats: {
                     include: {
-                        tripSeat: {
+                        seatAllocation: {
                             include: {
-                                seat: true,
+                                tripSeat: {
+                                    include: {
+                                        seat: true,
+                                    },
+                                },
                             },
                         },
+                        pickupTripRoutePoint: true,
+                        dropoffTripRoutePoint: true,
                     },
                 },
                 trip: {
@@ -246,12 +486,106 @@ export class BookingService {
         return booking;
     }
 
-    // Hủy booking chưa thanh toán và giải phóng những ghế mà booking đó đang giữ.
+    
+    // Lấy danh sách booking theo bộ lọc và phân trang.
+    async findAll(query: QueryBookingDto) {
+        const page = Math.max(1, Number(query.page) || 1);
+        const limit = Math.min(
+            100,
+            Math.max(1, Number(query.limit) || 20),
+        );
+
+        const skip = (page - 1) * limit;
+
+        const where: Prisma.BookingWhereInput = {
+            ...(query.tripId && {
+                tripId: query.tripId,
+            }),
+
+            ...(query.customerPhone && {
+                customerPhone: {
+                    contains: query.customerPhone,
+                },
+            }),
+
+            ...(query.bookingCode && {
+                bookingCode: {
+                    contains: query.bookingCode,
+                    mode: 'insensitive',
+                },
+            }),
+
+            ...(query.status && {
+                status: query.status,
+            }),
+
+            ...(query.paymentStatus && {
+                paymentStatus: query.paymentStatus,
+            }),
+        };
+
+        const [items, total] = await this.prisma.$transaction([
+            this.prisma.booking.findMany({
+                where,
+                skip,
+                take: limit,
+                orderBy: {
+                    createdAt: 'desc',
+                },
+                include: {
+                    trip: {
+                        include: {
+                            route: true,
+                            vehicle: true,
+                        },
+                    },
+                    seats: {
+                        include: {
+                            seatAllocation: {
+                                include: {
+                                    tripSeat: {
+                                        include: {
+                                            seat: true,
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+            }),
+
+            this.prisma.booking.count({
+                where,
+            }),
+        ]);
+
+        return {
+            data: items,
+            pagination: {
+                page,
+                limit,
+                total,
+                totalPages: Math.ceil(total / limit),
+            },
+        };
+    }
+
+
+    // Hủy booking chưa thanh toán và giải phóng các SeatAllocation đang giữ.
     async cancel(id: string) {
         return this.prisma.$transaction(async (tx) => {
             const booking = await tx.booking.findUnique({
-                where: { id },
-                include: { seats: true },
+                where: {
+                    id,
+                },
+                include: {
+                    seats: {
+                        select: {
+                            seatAllocationId: true,
+                        },
+                    },
+                },
             });
 
             if (!booking) {
@@ -266,47 +600,66 @@ export class BookingService {
                 );
             }
 
-            if (booking.paymentStatus === 'PAID') {
+            if (
+                !['UNPAID', 'FAILED', 'REJECTED'].includes(
+                    booking.paymentStatus,
+                )
+            ) {
                 throw new BadRequestException(
-                    'Booking đã thanh toán, cần xử lý hoàn tiền riêng',
+                    'Booking đã có giao dịch thanh toán cần xử lý. Không thể tự động hủy.',
                 );
             }
 
-            // Chỉ giải phóng ghế nếu ghế vẫn thuộc lượt giữ chỗ này.
-            // Nếu ghế đã được khách khác giữ lại, không được giải phóng.
-            if (booking.holdExpiresAt) {
-                for (const item of booking.seats) {
-                    await tx.tripSeat.updateMany({
-                        where: {
-                            id: item.tripSeatId,
-                            status: 'HELD',
-                            heldByBookingId: booking.id,
-                        },
-                        data: {
-                            status: 'AVAILABLE',
-                            holdExpiresAt: null,
-                            heldByBookingId: null,
-                        },
-                    });
-                }
-            }
-
-            const cancelled = await tx.booking.update({
-                where: { id },
+            // Chuyển booking sang trạng thái CANCELLED.
+            const cancelled = await tx.booking.updateMany({
+                where: {
+                    id,
+                    status: 'PENDING',
+                    paymentStatus: {
+                        in: ['UNPAID', 'FAILED', 'REJECTED'],
+                    },
+                },
                 data: {
                     status: 'CANCELLED',
                     holdExpiresAt: null,
                 },
             });
 
+            if (cancelled.count !== 1) {
+                throw new ConflictException(
+                    'Booking đã được xử lý bởi một yêu cầu khác',
+                );
+            }
+
+            // Giải phóng các lượt phân bổ ghế vẫn đang HELD.
+            const allocationIds = booking.seats.map(
+                (seat) => seat.seatAllocationId,
+            );
+
+            if (allocationIds.length > 0) {
+                await tx.seatAllocation.updateMany({
+                    where: {
+                        id: {
+                            in: allocationIds,
+                        },
+                        status: 'HELD',
+                    },
+                    data: {
+                        status: 'RELEASED',
+                        holdExpiresAt: null,
+                    },
+                });
+            }
+
             return {
                 message: 'Hủy booking thành công',
-                booking: cancelled,
+                bookingId: id,
+                status: 'CANCELLED',
             };
         });
     }
 
-    // Tự động hết hạn booking chưa thanh toán và giải phóng các ghế do booking đó giữ.
+    // Tự động hết hạn booking chưa thanh toán và giải phóng SeatAllocation.
     @Cron(CronExpression.EVERY_MINUTE)
     async expireHeldBookings() {
         const now = new Date();
@@ -315,7 +668,7 @@ export class BookingService {
             where: {
                 status: 'PENDING',
                 paymentStatus: {
-                    in: ['UNPAID', 'FAILED'],
+                    in: ['UNPAID', 'FAILED', 'REJECTED'],
                 },
                 holdExpiresAt: {
                     lte: now,
@@ -323,28 +676,23 @@ export class BookingService {
             },
             select: {
                 id: true,
-                holdExpiresAt: true,
                 seats: {
                     select: {
-                        tripSeatId: true,
+                        seatAllocationId: true,
                     },
                 },
             },
         });
 
         for (const booking of expiredBookings) {
-            if (!booking.holdExpiresAt) {
-                continue;
-            }
-
             await this.prisma.$transaction(async (tx) => {
-                // Chỉ một tiến trình được quyền hết hạn booking này.
+                // Chỉ một tiến trình được phép chuyển booking sang EXPIRED.
                 const result = await tx.booking.updateMany({
                     where: {
                         id: booking.id,
                         status: 'PENDING',
                         paymentStatus: {
-                            in: ['UNPAID', 'FAILED'],
+                            in: ['UNPAID', 'FAILED', 'REJECTED'],
                         },
                         holdExpiresAt: {
                             lte: now,
@@ -356,23 +704,26 @@ export class BookingService {
                     },
                 });
 
-                // Booking đã được xử lý hoặc thay đổi trạng thái.
                 if (result.count !== 1) {
                     return;
                 }
 
-                // Chỉ trả ghế nếu ghế vẫn thuộc booking đã hết hạn.
-                for (const item of booking.seats) {
-                    await tx.tripSeat.updateMany({
+                // Chỉ giải phóng các lượt phân bổ đang HELD.
+                const allocationIds = booking.seats.map(
+                    (seat) => seat.seatAllocationId,
+                );
+
+                if (allocationIds.length > 0) {
+                    await tx.seatAllocation.updateMany({
                         where: {
-                            id: item.tripSeatId,
+                            id: {
+                                in: allocationIds,
+                            },
                             status: 'HELD',
-                            heldByBookingId: booking.id,
                         },
                         data: {
-                            status: 'AVAILABLE',
+                            status: 'EXPIRED',
                             holdExpiresAt: null,
-                            heldByBookingId: null,
                         },
                     });
                 }

@@ -5,10 +5,12 @@ import {
   Get,
   Param,
   Post,
-  Patch
+  Patch,
+  Query,
 } from '@nestjs/common';
 import { BookingService } from './booking.service';
 import { CreateBookingDto } from './dto/create-booking.dto';
+import { QueryBookingDto } from './dto/query-booking.dto';
 
 @Controller('bookings')
 export class BookingController {
@@ -22,6 +24,12 @@ export class BookingController {
     @Get(':id')
     findOne(@Param('id') id: string) {
         return this.bookingService.findOne(id);
+    }
+
+    // Lấy danh sách booking theo bộ lọc và phân trang.
+    @Get()
+    findAll(@Query() query: QueryBookingDto) {
+        return this.bookingService.findAll(query);
     }
 
     @Patch(':id/cancel')
