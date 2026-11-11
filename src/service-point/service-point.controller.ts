@@ -19,7 +19,7 @@ export class ServicePointController{
     }
 
     @Post()
-    @Roles('ADMIN','STAFF')
+    @Roles('ADMIN')
     create(@Body() data: CreateServicePointDto){
         return this.servicePointService.create(data);
     }

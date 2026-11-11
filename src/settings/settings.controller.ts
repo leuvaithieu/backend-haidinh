@@ -25,12 +25,14 @@ export class SettingsController {
     ) {}
 
     // Lấy danh sách cấu hình hệ thống cho người dùng đã đăng nhập.
+    @Roles('ADMIN', 'STAFF')
     @Get()
     async findAll() {
         return this.settingsService.findAll();
     }
 
     // Lấy thông tin một cấu hình theo key.
+    @Roles('ADMIN', 'STAFF')
     @Get(':key')
     async findOne(@Param('key') key: string) {
         return this.settingsService.findOne(key);

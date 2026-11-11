@@ -22,7 +22,7 @@ export class VehicleController {
   constructor(private readonly vehicleService: VehicleService) {}
 
   @Post()
-  @Roles('ADMIN','STAFF')
+  @Roles('ADMIN')
   create(@Body() createVehicleDto: CreateVehicleDto) {
     return this.vehicleService.create(createVehicleDto);
   }
@@ -34,7 +34,7 @@ export class VehicleController {
   }
 
   @Patch(':id')
-  @Roles('ADMIN','STAFF')
+  @Roles('ADMIN')
   update(
     @Param('id') id: string,
     @Body() updateVehicleDto: UpdateVehicleDto,

@@ -41,7 +41,7 @@ export class RouteController {
   // Tạo tuyến vận hành
   @Post()
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles('ADMIN', 'STAFF')
+  @Roles('ADMIN')
   create(@Body() data: CreateRouteDto) {
     return this.routeService.create(data);
   }
@@ -49,7 +49,7 @@ export class RouteController {
   // Cập nhật tuyến vận hành
   @Patch(':id')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles('ADMIN', 'STAFF')
+  @Roles('ADMIN')
   update(
     @Param('id') id: string,
     @Body() data: UpdateRoute,

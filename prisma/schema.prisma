@@ -7,6 +7,108 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+//Nơi khai báo enum
+enum RouteScheduleType {
+  NORMAL
+  TET
+}
+
+enum VehicleStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum AssistantStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum TripStatus {
+  SCHEDULED
+  DEPARTED
+  AT_DESTINATION
+  RETURNING
+  COMPLETED
+  CANCELLED
+}
+
+enum TripDirection {
+  OUTBOUND
+  RETURN
+}
+
+enum CmsStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum SeatType {
+  BERTH
+  SEAT
+  PRIVATE_ROOM
+  OTHER
+}
+
+enum SeatLayoutStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+enum BookingStatus {
+  PENDING
+  PAYMENT_REVIEW
+  CONFIRMED
+  CANCELLED
+  EXPIRED
+}
+
+enum PaymentStatus {
+  UNPAID
+  PENDING
+  REPORTED
+  PARTIALLY_PAID
+  PAID
+  FAILED
+  REJECTED
+  REFUNDED
+}
+
+enum PaymentMethod {
+  BANK_TRANSFER
+}
+
+enum TripSeatStatus {
+  AVAILABLE
+  HELD
+  BOOKED
+}
+
+enum PricePolicyStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+enum PriceEntryType {
+  FIXED
+  CONTACT
+}
+
+enum PricePointType {
+  ROUTE_POINT
+  SERVICE_POINT
+}
+
+enum SeatAllocationStatus {
+  HELD
+  BOOKED
+  RELEASED
+  EXPIRED
+}
+
+//Khai báo các model
 model Customer {
   id           String    @id @default(cuid())
   fullName     String
@@ -485,23 +587,28 @@ model SystemSetting {
   updatedAt DateTime @updatedAt
 }
 
+
 model RoutePricePolicy {
   id String @id @default(cuid())
 
   routeId String
-  route   Route  @relation(fields: [routeId], references: [id], onDelete: Restrict)
+  route   Route @relation(fields: [routeId], references: [id], onDelete: Restrict)
 
-  // Điểm xuất phát chính của chính sách giá.
-  baseOriginRoutePointId String
-  baseOriginRoutePoint   RoutePoint @relation("PricePolicyBaseOrigin", fields: [baseOriginRoutePointId], references: [id], onDelete: Restrict)
+  // Chế độ giá NORMAL hoặc TET.
+  pricingMode RouteScheduleType @default(NORMAL)
 
-  // Chiều chạy của bảng giá.
+  // Điểm xuất phát gốc, chỉ sử dụng cho NORMAL.
+  baseOriginRoutePointId String?
+  baseOriginRoutePoint RoutePoint? @relation("PricePolicyBaseOrigin", fields: [baseOriginRoutePointId], references: [id], onDelete: Restrict)
+
+  // Chiều áp dụng chính sách.
   direction TripDirection
 
   // null: áp dụng chung mọi loại xe.
   // Có giá trị: áp dụng riêng cho loại xe đó.
   vehicleType String?
 
+  // Phiên bản chính sách trong cùng phạm vi.
   version Int @default(1)
 
   status PricePolicyStatus @default(DRAFT)
@@ -509,9 +616,11 @@ model RoutePricePolicy {
   effectiveFrom DateTime
   effectiveTo   DateTime?
 
-  // Phụ phí mặc định của chính sách.
-  fuelSurcharge    Int @default(0)
-  serviceSurcharge Int @default(0)
+  // Giá toàn tuyến, chỉ sử dụng cho TET.
+  fullRoutePrice Int?
+
+  // Điều chỉnh cố định giá tuyến, chỉ sử dụng cho NORMAL.
+  routeAdjustmentAmount Int @default(0)
 
   routePointPrices   RoutePointPrice[]
   servicePointPrices ServicePointPrice[]
@@ -522,23 +631,25 @@ model RoutePricePolicy {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@index([routeId, direction, status])
-  @@index([routeId, vehicleType])
-  @@index([effectiveFrom, effectiveTo])
+  @@index([routeId, pricingMode, direction, status])
+  @@index([routeId, vehicleType, effectiveFrom, effectiveTo])
+  @@index([routeId, pricingMode, direction, version])
 }
 
+
 //Giá theo RoutePoint
+
 model RoutePointPrice {
   id String @id @default(cuid())
 
   policyId String
-  policy   RoutePricePolicy @relation(fields: [policyId], references: [id], onDelete: Cascade)
+  policy RoutePricePolicy @relation(fields: [policyId],references: [id], onDelete: Cascade)
 
   routePointId String
-  routePoint   RoutePoint @relation(fields: [routePointId], references: [id], onDelete: Restrict)
+  routePoint RoutePoint @relation(fields: [routePointId], references: [id], onDelete: Restrict)
 
   priceType PriceEntryType @default(CONTACT)
-  price     Int?
+  price Int?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -547,18 +658,20 @@ model RoutePointPrice {
   @@index([routePointId])
 }
 
+
 //Giá theo servicepoint
+
 model ServicePointPrice {
   id String @id @default(cuid())
 
   policyId String
-  policy   RoutePricePolicy @relation(fields: [policyId], references: [id], onDelete: Cascade)
+  policy RoutePricePolicy @relation( fields: [policyId], references: [id], onDelete: Cascade)
 
   servicePointId String
-  servicePoint   ServicePoint @relation(fields: [servicePointId], references: [id], onDelete: Restrict)
+  servicePoint ServicePoint @relation( fields: [servicePointId], references: [id], onDelete: Restrict)
 
   priceType PriceEntryType @default(CONTACT)
-  price     Int?
+  price Int?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -567,35 +680,37 @@ model ServicePointPrice {
   @@index([servicePointId])
 }
 
+
 //Giá theo cặp điểm lên - xuống
+
 model RoutePriceOverride {
   id String @id @default(cuid())
 
   policyId String
-  policy   RoutePricePolicy @relation(fields: [policyId], references: [id], onDelete: Cascade)
+  policy RoutePricePolicy @relation(fields: [policyId], references: [id], onDelete: Cascade)
 
   fromPointType PricePointType
-  toPointType   PricePointType
+  toPointType PricePointType
 
   // RP:<id> hoặc SP:<id>.
-  // Dùng key để bảo đảm không tạo trùng cặp điểm.
+  // Dùng key để xác định duy nhất cặp điểm.
   fromPointKey String
-  toPointKey   String
+  toPointKey String
 
   fromRoutePointId String?
-  fromRoutePoint   RoutePoint? @relation("PriceOverrideFromRoutePoint", fields: [fromRoutePointId], references: [id], onDelete: Restrict)
+  fromRoutePoint RoutePoint? @relation("PriceOverrideFromRoutePoint", fields: [fromRoutePointId], references: [id], onDelete: Restrict)
 
   fromServicePointId String?
-  fromServicePoint   ServicePoint? @relation("PriceOverrideFromServicePoint", fields: [fromServicePointId], references: [id], onDelete: Restrict)
+  fromServicePoint ServicePoint? @relation( "PriceOverrideFromServicePoint", fields: [fromServicePointId], references: [id], onDelete: Restrict)
 
   toRoutePointId String?
-  toRoutePoint   RoutePoint? @relation("PriceOverrideToRoutePoint", fields: [toRoutePointId], references: [id], onDelete: Restrict)
+  toRoutePoint RoutePoint? @relation( "PriceOverrideToRoutePoint", fields: [toRoutePointId], references: [id], onDelete: Restrict)
 
   toServicePointId String?
-  toServicePoint   ServicePoint? @relation("PriceOverrideToServicePoint", fields: [toServicePointId], references: [id], onDelete: Restrict)
+  toServicePoint ServicePoint? @relation("PriceOverrideToServicePoint", fields: [toServicePointId], references: [id], onDelete: Restrict)
 
   priceType PriceEntryType @default(CONTACT)
-  price     Int?
+  price Int?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -603,6 +718,7 @@ model RoutePriceOverride {
   @@unique([policyId, fromPointKey, toPointKey])
   @@index([policyId])
 }
+
 
 model SeatAllocation {
   id String @id @default(cuid())
@@ -630,105 +746,4 @@ model SeatAllocation {
 
   @@index([tripSeatId, direction, status])
   @@index([holdExpiresAt])
-}
-
-//Nơi khai báo enum
-enum RouteScheduleType {
-  NORMAL
-  TET
-}
-
-enum VehicleStatus {
-  ACTIVE
-  INACTIVE
-}
-
-enum AssistantStatus {
-  ACTIVE
-  INACTIVE
-}
-
-enum TripStatus {
-  SCHEDULED
-  DEPARTED
-  AT_DESTINATION
-  RETURNING
-  COMPLETED
-  CANCELLED
-}
-
-enum TripDirection {
-  OUTBOUND
-  RETURN
-}
-
-enum CmsStatus {
-  DRAFT
-  PUBLISHED
-  ARCHIVED
-}
-
-enum SeatType {
-  BERTH
-  SEAT
-  PRIVATE_ROOM
-  OTHER
-}
-
-enum SeatLayoutStatus {
-  DRAFT
-  ACTIVE
-  ARCHIVED
-}
-
-enum BookingStatus {
-  PENDING
-  PAYMENT_REVIEW
-  CONFIRMED
-  CANCELLED
-  EXPIRED
-}
-
-enum PaymentStatus {
-  UNPAID
-  PENDING
-  REPORTED
-  PARTIALLY_PAID
-  PAID
-  FAILED
-  REJECTED
-  REFUNDED
-}
-
-enum PaymentMethod {
-  BANK_TRANSFER
-}
-
-enum TripSeatStatus {
-  AVAILABLE
-  HELD
-  BOOKED
-}
-
-enum PricePolicyStatus {
-  DRAFT
-  ACTIVE
-  ARCHIVED
-}
-
-enum PriceEntryType {
-  FIXED
-  CONTACT
-}
-
-enum PricePointType {
-  ROUTE_POINT
-  SERVICE_POINT
-}
-
-enum SeatAllocationStatus {
-  HELD
-  BOOKED
-  RELEASED
-  EXPIRED
 }

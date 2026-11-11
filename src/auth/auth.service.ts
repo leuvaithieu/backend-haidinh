@@ -10,6 +10,7 @@ export class AuthService {
         private readonly jwtService:JwtService,
     ){}
 
+    // Kiểm tra thông tin đăng nhập và trạng thái tài khoản.
     async validateUser(
         username:string,
         password:string,
@@ -29,6 +30,11 @@ export class AuthService {
             throw new UnauthorizedException("Tên đăng nhập hoặc mật khẩu không đúng !")
         }
 
+        // Từ chối đăng nhập nếu tài khoản đã bị khóa.
+        if (user.status !== 'ACTIVE') {
+            throw new UnauthorizedException('Tài khoản đã bị khóa!');
+        }
+
         return {
             id:user.id,
             username:user.username,
@@ -39,6 +45,7 @@ export class AuthService {
         }
     };
 
+    // Đăng nhập và cấp JWT cho người dùng.
     async login(username:string, password:string){
         const user = await this.validateUser(
             username,

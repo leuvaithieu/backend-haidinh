@@ -25,13 +25,13 @@ export class TripController {
     }
 
     @Post()
-    @Roles('ADMIN','STAFF')
+    @Roles('ADMIN')
     create(@Body() data:CreateTripDto ,  @CurrentUser() user){
         return this.tripService.create(data, user.userId)
     }
 
     @Patch(':id')
-    @Roles('ADMIN','STAFF')
+    @Roles('ADMIN')
     update(
         @Param('id') id:string,
         @Body() data:UpdateTripDto

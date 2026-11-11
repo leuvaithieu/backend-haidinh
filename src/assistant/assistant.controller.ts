@@ -25,13 +25,13 @@ export class AssistantController {
     }
 
     @Post()
-    @Roles('ADMIN','STAFF')
+    @Roles('ADMIN')
     create(@Body() data:CreateAssistantDto){
         return this.assistantService.create(data);
     }
 
     @Patch(':id')
-    @Roles('ADMIN','STAFF')
+    @Roles('ADMIN')
     update(
         @Param('id') id:string,
         @Body() data:UpdateAssistantDto

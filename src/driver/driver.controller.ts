@@ -24,13 +24,13 @@ export class DriverController {
     }
 
     @Post()
-    @Roles('ADMIN','STAFF')
+    @Roles('ADMIN')
     create(@Body() data:CreateDriverDto){
         return this.driverService.create(data);
     }
 
     @Patch(':id')
-    @Roles('ADMIN','STAFF')
+    @Roles('ADMIN')
     update(
         @Param('id') id:string,
         @Body() data:UpdateDriverDto

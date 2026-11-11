@@ -18,28 +18,31 @@ import { UpdateRouteSegmentDto } from './dto/update-route-segment.dto';
 import { RouteSegmentService } from './route-segment.service';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles('ADMIN', 'STAFF')
 @Controller('route-segments')
 export class RouteSegmentController {
     constructor(
         private readonly routeSegmentService: RouteSegmentService,
     ) {}
 
+    @Roles('ADMIN', 'STAFF')
     @Get()
     findAll(@Query('routeId') routeId?: string) {
         return this.routeSegmentService.findAll(routeId);
     }
 
+    @Roles('ADMIN', 'STAFF')
     @Get(':id')
     findOne(@Param('id') id: string) {
         return this.routeSegmentService.findOne(id);
     }
 
+    @Roles('ADMIN')
     @Post()
     create(@Body() data: CreateRouteSegmentDto) {
         return this.routeSegmentService.create(data);
     }
 
+    @Roles('ADMIN')
     @Patch(':id')
     update(
         @Param('id') id: string,
@@ -48,6 +51,7 @@ export class RouteSegmentController {
         return this.routeSegmentService.update(id, data);
     }
 
+    @Roles('ADMIN')
     @Delete(':id')
     remove(@Param('id') id: string) {
         return this.routeSegmentService.remove(id);

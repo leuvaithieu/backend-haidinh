@@ -13,11 +13,18 @@ import { ArticleService } from './article.service';
 import { CreateArticleDto } from './dto/create-article.dto';
 import { UpdateArticleDto } from './dto/update-article.dto';
 import { CmsStatus } from '@prisma/client';
+import { UseGuards } from '@nestjs/common';
 
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { RolesGuard } from '../auth/roles.guard';
+import { Roles } from '../auth/roles.decorator';
+
+@UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('articles')
 export class ArticleController {
   constructor(private readonly articleService: ArticleService) {}
 
+  @Roles('ADMIN', 'STAFF')
   @Get()
   findAll(
     @Query('search') search?:string,
@@ -33,16 +40,19 @@ export class ArticleController {
     });
   }
 
+  @Roles('ADMIN', 'STAFF')
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.articleService.findOne(id);
   }
 
+  @Roles('ADMIN', 'STAFF')
   @Post()
   create(@Body() dto: CreateArticleDto) {
     return this.articleService.create(dto);
   }
 
+  @Roles('ADMIN', 'STAFF')
   @Patch(':id')
   update(
     @Param('id') id: string,
@@ -50,7 +60,8 @@ export class ArticleController {
   ) {
     return this.articleService.update(id, dto);
   }
-
+  
+  @Roles('ADMIN')
   @Delete(':id')
   remove(@Param('id') id: string) {
     return this.articleService.remove(id);

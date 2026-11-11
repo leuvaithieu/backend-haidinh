@@ -18,13 +18,13 @@ export class RoutePointController{
     }
 
     @Post()
-    @Roles('ADMIN','STAFF')
+    @Roles('ADMIN')
     create(@Body() data: CreateRoutePointDto){
         return this.routePointService.create(data);
     }
 
     @Patch(':id')
-    @Roles('ADMIN','STAFF')
+    @Roles('ADMIN')
     update(
         @Param('id') id:string,
         @Body() data: UpdateRoutePointDto,
