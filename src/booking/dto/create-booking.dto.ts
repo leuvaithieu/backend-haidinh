@@ -24,6 +24,16 @@ export class CreateBookingSeatDto {
     @IsString()
     dropoffTripRoutePointId!: string;
 
+    // ID điểm dịch vụ đón, nếu khách chọn ServicePoint.
+    @IsOptional()
+    @IsString()
+    pickupServicePointId?: string;
+
+    // ID điểm dịch vụ trả, nếu khách chọn ServicePoint.
+    @IsOptional()
+    @IsString()
+    dropoffServicePointId?: string;
+
     @IsOptional()
     @IsString()
     @MaxLength(100)

@@ -15,11 +15,14 @@ import { SettingsService } from '../settings/settings.service';
 import { CreateBookingDto } from './dto/create-booking.dto';
 import { QueryBookingDto } from './dto/query-booking.dto';
 
+import { PricingService } from '../pricing/pricing.service';
+
 @Injectable()
 export class BookingService {
     constructor(
         private readonly prisma: PrismaService,
         private readonly settingsService: SettingsService,
+        private readonly pricingService: PricingService,
     ) {}
 
     // Tạo booking và giữ ghế theo từng đoạn đường trong một transaction.
@@ -77,13 +80,6 @@ export class BookingService {
                         );
                     }
 
-                    // Tạm sử dụng giá chuyến cũ khi PricingService chưa hoàn thành.
-                    if (trip.ticketPrice <= 0) {
-                        throw new BadRequestException(
-                            'Chuyến xe chưa được cấu hình giá vé',
-                        );
-                    }
-
                     // 2. Kiểm tra sơ đồ ghế của xe.
                     const layout = trip.vehicle.seatLayout;
 
@@ -129,6 +125,16 @@ export class BookingService {
                         ),
                     ];
 
+                    // Lấy danh sách ServicePoint được khách chọn, loại bỏ ID trùng lặp.
+                    const requestedServicePointIds = [
+                        ...new Set(
+                            dto.seats.flatMap((seat) => [
+                                seat.pickupServicePointId,
+                                seat.dropoffServicePointId,
+                            ].filter((id): id is string => Boolean(id))),
+                        ),
+                    ];
+
                     const tripRoutePoints =
                         await tx.tripRoutePoint.findMany({
                             where: {
@@ -161,6 +167,31 @@ export class BookingService {
                         ]),
                     );
 
+                    // Lấy thông tin các ServicePoint được khách lựa chọn.
+                    const servicePoints = await tx.servicePoint.findMany({
+                        where: {
+                            id: {
+                                in: requestedServicePointIds,
+                            },
+                        },
+                        select: {
+                            id: true,
+                            routePointId: true,
+                        },
+                    });
+
+                    // Tạo bản đồ tra cứu ServicePoint theo ID.
+                    const servicePointMap = new Map(
+                        servicePoints.map((point) => [point.id, point]),
+                    );
+
+                    // Kiểm tra tất cả ServicePoint được gửi lên có tồn tại.
+                    if (servicePoints.length !== requestedServicePointIds.length) {
+                        throw new BadRequestException(
+                            'Có điểm dịch vụ đón hoặc trả không tồn tại',
+                        );
+                    }
+
                     // Kiểm tra điểm đón phải đứng trước điểm trả.
                     for (const seat of dto.seats) {
                         const pickup = pointMap.get(
@@ -180,6 +211,73 @@ export class BookingService {
                                 'Điểm đón phải nằm trước điểm trả',
                             );
                         }
+
+                        // Đảm bảo điểm đón và trả trong lịch trình có liên kết RoutePoint hợp lệ.
+                        if (!pickup.routePointId || !dropoff.routePointId) {
+                            throw new BadRequestException(
+                                'Lịch trình chuyến xe có điểm đón hoặc điểm trả chưa được liên kết với tuyến đường',
+                            );
+                        }
+
+                        // Kiểm tra ServicePoint phải thuộc đúng RoutePoint đã chọn.
+                        const pickupServicePoint = seat.pickupServicePointId
+                            ? servicePointMap.get(seat.pickupServicePointId)
+                            : null;
+
+                        const dropoffServicePoint = seat.dropoffServicePointId
+                            ? servicePointMap.get(seat.dropoffServicePointId)
+                            : null;
+
+                        if (
+                            pickupServicePoint &&
+                            pickupServicePoint.routePointId !== pickup.routePointId
+                        ) {
+                            throw new BadRequestException(
+                                'Điểm dịch vụ đón không thuộc điểm tuyến đã chọn',
+                            );
+                        }
+
+                        if (
+                            dropoffServicePoint &&
+                            dropoffServicePoint.routePointId !== dropoff.routePointId
+                        ) {
+                            throw new BadRequestException(
+                                'Điểm dịch vụ trả không thuộc điểm tuyến đã chọn',
+                            );
+                        }
+                    }
+
+                    // Tính giá vé riêng cho từng ghế theo hành trình đã chọn.
+                    const pricedSeats: Array<{
+                        seatDto: (typeof dto.seats)[number];
+                        price: number;
+                        priceSnapshot: Awaited<
+                            ReturnType<PricingService['calculatePrice']>
+                        >;
+                    }> = [];
+
+                    for (const seatDto of dto.seats) {
+                        const priceSnapshot = await this.pricingService.calculatePrice({
+                            tripId: trip.id,
+                            direction: dto.direction,
+                            pickupTripRoutePointId: seatDto.pickupTripRoutePointId,
+                            dropoffTripRoutePointId: seatDto.dropoffTripRoutePointId,
+                            pickupServicePointId: seatDto.pickupServicePointId,
+                            dropoffServicePointId: seatDto.dropoffServicePointId,
+                            tx,
+                        });
+
+                        if (priceSnapshot.finalPrice === null) {
+                            throw new BadRequestException(
+                                'Hành trình này chưa có giá vé trực tuyến. Vui lòng liên hệ nhân viên để được hỗ trợ.',
+                            );
+                        }
+
+                        pricedSeats.push({
+                            seatDto,
+                            price: priceSnapshot.finalPrice,
+                            priceSnapshot,
+                        });
                     }
 
                     // 4. Khởi tạo TripSeat nếu ghế chưa có trong chuyến.
@@ -305,9 +403,11 @@ export class BookingService {
                             .toUpperCase()}`
                     ;
 
-                    const totalAmount =
-                        dto.seats.length * trip.ticketPrice
-                    ;
+                    // Tính tổng tiền booking từ giá vé riêng của từng ghế.
+                    const totalAmount = pricedSeats.reduce(
+                        (total, item) => total + item.price,
+                        0,
+                    );
 
                     // Mức cọc áp dụng không vượt quá tổng tiền vé của booking.
                     const requiredDepositAmount = Math.min(
@@ -341,7 +441,8 @@ export class BookingService {
                         price: number;
                     }[] = [];
 
-                    for (const seatDto of dto.seats) {
+                    for (const pricedSeat of pricedSeats) {
+                        const seatDto = pricedSeat.seatDto;
                         const tripSeat = tripSeatMap.get(
                             seatDto.seatId,
                         );
@@ -379,23 +480,27 @@ export class BookingService {
                                 data: {
                                     bookingId: booking.id,
                                     seatAllocationId: allocation.id,
-                                    price: trip.ticketPrice,
-                                    pickupTripRoutePointId:
-                                        pickup.id,
-                                    dropoffTripRoutePointId:
-                                        dropoff.id,
-                                    pickupRoutePointId:
-                                        pickup.routePointId,
-                                    dropoffRoutePointId:
-                                        dropoff.routePointId,
-                                    passengerName:
-                                        seatDto.passengerName,
-                                    passengerPhone:
-                                        seatDto.passengerPhone,
-                                    priceSnapshot: {
-                                        unitPrice: trip.ticketPrice,
-                                        source: 'TRIP_TICKET_PRICE',
-                                    },
+
+                                    price: pricedSeat.price,
+                                    pricePolicyId: pricedSeat.priceSnapshot.policyId,
+
+                                    pickupTripRoutePointId: pickup.id,
+                                    dropoffTripRoutePointId: dropoff.id,
+                                    pickupRoutePointId: pickup.routePointId,
+                                    dropoffRoutePointId: dropoff.routePointId,
+
+                                    passengerName: seatDto.passengerName,
+                                    passengerPhone: seatDto.passengerPhone,
+
+                                    priceSnapshot: JSON.parse(
+                                        JSON.stringify(pricedSeat.priceSnapshot),
+                                    ) as Prisma.InputJsonValue,
+
+                                    pickupServicePointId:
+                                        seatDto.pickupServicePointId ?? null,
+
+                                    dropoffServicePointId:
+                                        seatDto.dropoffServicePointId ?? null,
                                 },
                             });
 

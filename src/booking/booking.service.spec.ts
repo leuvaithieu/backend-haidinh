@@ -12,10 +12,43 @@ import { BookingService } from './booking.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { SettingsService } from '../settings/settings.service';
 
+import { PricingService } from '../pricing/pricing.service';
+
 describe('BookingService', () => {
     let service: BookingService;
     let tx: any;
     let prismaMock: any;
+
+    let pricingServiceMock: any;
+
+    const mockPriceSnapshot = {
+        pricingMode: 'NORMAL',
+        direction: 'OUTBOUND',
+        policyId: 'policy-01',
+        policyVersion: 1,
+        currency: 'VND',
+        priceSource: 'ROUTE_POINT_PRICE',
+        basePrice: 500000,
+        routeAdjustmentAmount: 0,
+        finalPrice: 500000,
+        pickup: {
+            tripRoutePointId: 'point-01',
+            routePointId: 'route-point-01',
+            pointName: 'Điểm đón',
+            servicePointId: null,
+            servicePointName: null,
+            sequence: 1,
+        },
+        dropoff: {
+            tripRoutePointId: 'point-05',
+            routePointId: 'route-point-05',
+            pointName: 'Điểm trả',
+            servicePointId: null,
+            servicePointName: null,
+            sequence: 5,
+        },
+        calculatedAt: new Date(),
+    };
 
     // Khởi tạo dữ liệu giả lập và các Prisma transaction phục vụ kiểm thử.
     beforeEach(async () => {
@@ -43,18 +76,36 @@ describe('BookingService', () => {
             },
 
             tripRoutePoint: {
-                findMany: jest.fn().mockResolvedValue([
-                    {
-                        id: 'point-01',
-                        sequence: 1,
-                        routePointId: 'route-point-01',
-                    },
-                    {
-                        id: 'point-05',
-                        sequence: 5,
-                        routePointId: 'route-point-05',
-                    },
-                ]),
+                // Giả lập truy vấn chỉ trả về các điểm được yêu cầu.
+                findMany: jest.fn().mockImplementation(async (args: any) => {
+                    const routePoints = [
+                        {
+                            id: 'point-01',
+                            sequence: 1,
+                            routePointId: 'route-point-01',
+                        },
+                        {
+                            id: 'point-03',
+                            sequence: 3,
+                            routePointId: 'route-point-03',
+                        },
+                        {
+                            id: 'point-05',
+                            sequence: 5,
+                            routePointId: 'route-point-05',
+                        },
+                    ];
+
+                    const requestedIds = args?.where?.id?.in;
+
+                    if (!requestedIds) {
+                        return routePoints;
+                    }
+
+                    return routePoints.filter((point) =>
+                        requestedIds.includes(point.id),
+                    );
+                }),
             },
 
             tripSeat: {
@@ -99,6 +150,12 @@ describe('BookingService', () => {
                     price: 500000,
                 }),
             },
+
+            servicePoint: {
+                findMany: jest.fn().mockResolvedValue([]),
+            },
+
+            $queryRaw: jest.fn().mockResolvedValue([]),
         };
 
         prismaMock = {
@@ -109,10 +166,21 @@ describe('BookingService', () => {
             ),
         };
 
+        // Giả lập PricingService trả về snapshot giá vé hợp lệ.
+        pricingServiceMock = {
+            calculatePrice: jest.fn().mockResolvedValue(
+                mockPriceSnapshot,
+            ),
+        };
+
         const module: TestingModule =
             await Test.createTestingModule({
                 providers: [
                     BookingService,
+                    {
+                        provide: PricingService,
+                        useValue: pricingServiceMock,
+                    },
                     {
                         provide: PrismaService,
                         useValue: prismaMock,
@@ -122,7 +190,8 @@ describe('BookingService', () => {
                         useValue: {
                             getNumberValue: jest
                                 .fn()
-                                .mockResolvedValue(20),
+                                .mockResolvedValueOnce(20)
+                                .mockResolvedValueOnce(300000),
                         },
                     },
                 ],
@@ -180,6 +249,45 @@ describe('BookingService', () => {
                 }),
             }),
         );
+
+        // Kiểm tra PricingService được gọi với đúng hành trình và transaction.
+        expect(pricingServiceMock.calculatePrice).toHaveBeenCalledWith({
+            tripId: 'trip-01',
+            direction: 'OUTBOUND',
+            pickupTripRoutePointId: 'point-01',
+            dropoffTripRoutePointId: 'point-05',
+            pickupServicePointId: undefined,
+            dropoffServicePointId: undefined,
+            tx,
+        });
+
+        // Kiểm tra tổng tiền booking.
+        expect(tx.booking.create).toHaveBeenCalledWith(
+            expect.objectContaining({
+                data: expect.objectContaining({
+                    totalAmount: 500000,
+                    depositAmount: 300000,
+                }),
+            }),
+        );
+
+        // Kiểm tra giá và chính sách giá được lưu vào BookingSeat.
+        expect(tx.bookingSeat.create).toHaveBeenCalledWith(
+            expect.objectContaining({
+                data: expect.objectContaining({
+                    price: 500000,
+                    pricePolicyId: 'policy-01',
+                    priceSnapshot: expect.objectContaining({
+                        pricingMode: 'NORMAL',
+                        policyId: 'policy-01',
+                        policyVersion: 1,
+                        priceSource: 'ROUTE_POINT_PRICE',
+                        basePrice: 500000,
+                        finalPrice: 500000,
+                    }),
+                }),
+            }),
+        );
     });
 
     // Kiểm tra không cho phép điểm đón nằm sau hoặc trùng điểm trả.
@@ -195,6 +303,7 @@ describe('BookingService', () => {
                 sequence: 1,
                 routePointId: 'route-point-05',
             },
+            
         ]);
 
         const dto = {
@@ -219,6 +328,40 @@ describe('BookingService', () => {
         expect(tx.seatAllocation.create).not.toHaveBeenCalled();
     });
 
+    // Không cho phép tạo booking khi hành trình chưa có giá trực tuyến.
+    it('should reject booking when pricing result is CONTACT', async () => {
+        pricingServiceMock.calculatePrice.mockResolvedValue({
+            ...mockPriceSnapshot,
+            priceSource: 'CONTACT',
+            basePrice: null,
+            finalPrice: null,
+        });
+
+        const dto = {
+            tripId: 'trip-01',
+            direction: 'OUTBOUND' as const,
+            customerName: 'Nguyen Van A',
+            customerPhone: '0901234567',
+            seats: [
+                {
+                    seatId: 'seat-01',
+                    pickupTripRoutePointId: 'point-01',
+                    dropoffTripRoutePointId: 'point-05',
+                    passengerName: 'Nguyen Van A',
+                },
+            ],
+        };
+
+        await expect(service.create(dto)).rejects.toThrow(
+            'Hành trình này chưa có giá vé trực tuyến. Vui lòng liên hệ nhân viên để được hỗ trợ.',
+        );
+
+        // Không được tạo booking hoặc giữ ghế khi chưa có giá.
+        expect(tx.booking.create).not.toHaveBeenCalled();
+        expect(tx.seatAllocation.create).not.toHaveBeenCalled();
+        expect(tx.bookingSeat.create).not.toHaveBeenCalled();
+    });
+
     // Kiểm tra SeatAllocation được tạo đúng chiều RETURN.
     it('should create seat allocation in RETURN direction', async () => {
         const dto = {
@@ -241,6 +384,108 @@ describe('BookingService', () => {
             expect.objectContaining({
                 data: expect.objectContaining({
                     direction: 'RETURN',
+                }),
+            }),
+        );
+    });
+
+    
+    // Kiểm tra mỗi ghế được tính giá riêng và tổng tiền booking chính xác.
+    it('should calculate different prices for multiple seats', async () => {
+
+        // Giả lập xe có hai ghế.
+        tx.trip.findUnique.mockResolvedValue({
+            id: 'trip-01',
+            status: 'SCHEDULED',
+            ticketPrice: 500000,
+            vehicle: {
+                seatLayout: {
+                    id: 'layout-01',
+                    status: 'ACTIVE',
+                    isTemplate: false,
+                    seats: [
+                        { id: 'seat-01', code: 'A01', isActive: true },
+                        { id: 'seat-02', code: 'A02', isActive: true },
+                    ],
+                },
+            },
+        });
+
+        // Giả lập hai ghế tương ứng trong chuyến.
+        tx.tripSeat.findMany.mockResolvedValue([
+            { id: 'trip-seat-01', seatId: 'seat-01' },
+            { id: 'trip-seat-02', seatId: 'seat-02' },
+        ]);
+
+        // Giả lập PricingService trả về giá khác nhau theo điểm trả.
+        pricingServiceMock.calculatePrice.mockImplementation(
+            async (params: any) => ({
+                ...mockPriceSnapshot,
+                dropoff: {
+                    ...mockPriceSnapshot.dropoff,
+                    tripRoutePointId: params.dropoffTripRoutePointId,
+                },
+                basePrice:
+                    params.dropoffTripRoutePointId === 'point-05'
+                        ? 1000000
+                        : 300000,
+                finalPrice:
+                    params.dropoffTripRoutePointId === 'point-05'
+                        ? 1000000
+                        : 300000,
+            }),
+        );
+
+        const dto = {
+            tripId: 'trip-01',
+            direction: 'OUTBOUND' as const,
+            customerName: 'Nguyen Van A',
+            customerPhone: '0901234567',
+            seats: [
+                {
+                    seatId: 'seat-01',
+                    pickupTripRoutePointId: 'point-01',
+                    dropoffTripRoutePointId: 'point-05',
+                    passengerName: 'Nguyen Van A',
+                },
+                {
+                    seatId: 'seat-02',
+                    pickupTripRoutePointId: 'point-01',
+                    dropoffTripRoutePointId: 'point-03',
+                    passengerName: 'Nguyen Van B',
+                },
+            ],
+        };
+
+        const result = await service.create(dto);
+
+        // Kiểm tra PricingService được gọi riêng cho từng ghế.
+        expect(pricingServiceMock.calculatePrice).toHaveBeenCalledTimes(2);
+
+        // Kiểm tra tổng tiền của hai ghế.
+        expect(tx.booking.create).toHaveBeenCalledWith(
+            expect.objectContaining({
+                data: expect.objectContaining({
+                    totalAmount: 1300000,
+                }),
+            }),
+        );
+
+        // Kiểm tra BookingSeat lưu đúng giá từng ghế.
+        expect(tx.bookingSeat.create).toHaveBeenNthCalledWith(
+            1,
+            expect.objectContaining({
+                data: expect.objectContaining({
+                    price: 1000000,
+                }),
+            }),
+        );
+
+        expect(tx.bookingSeat.create).toHaveBeenNthCalledWith(
+            2,
+            expect.objectContaining({
+                data: expect.objectContaining({
+                    price: 300000,
                 }),
             }),
         );
