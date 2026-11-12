@@ -105,6 +105,15 @@ export class BookingService {
                         (seat) => seat.seatId,
                     );
 
+                    // Không cho phép một ghế xuất hiện nhiều lần trong cùng booking.
+                    const uniqueSeatIds = new Set(requestedSeatIds);
+
+                    if (uniqueSeatIds.size !== requestedSeatIds.length) {
+                        throw new BadRequestException(
+                            'Không được chọn một ghế nhiều lần trong cùng booking',
+                        );
+                    }
+
                     const invalidSeatIds = requestedSeatIds.filter(
                         (seatId) => !activeSeatIds.has(seatId),
                     );

@@ -25,7 +25,7 @@ export class PaymentService {
     // Khách hàng báo chuyển khoản lần đầu hoặc thanh toán phần tiền còn lại.
     async reportPayment(bookingId: string, dto: ReportPaymentDto) {
         try{
-            return this.prisma.$transaction(
+            return await this.prisma.$transaction(
                 async (tx) => {
                     // Khóa booking để tuần tự hóa các yêu cầu báo thanh toán cùng booking.
                     await tx.$queryRaw`

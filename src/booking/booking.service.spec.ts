@@ -6,7 +6,8 @@ jest.mock('@nestjs/schedule', () => ({
 }));
 
 import { Test, TestingModule } from '@nestjs/testing';
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ConflictException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 
 import { BookingService } from './booking.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -159,6 +160,9 @@ describe('BookingService', () => {
         };
 
         prismaMock = {
+            booking: {
+                findMany: jest.fn().mockResolvedValue([]),
+            },
             $transaction: jest.fn(
                 async (callback: (transaction: any) => any) => {
                     return callback(tx);
@@ -199,6 +203,31 @@ describe('BookingService', () => {
 
         service = module.get<BookingService>(BookingService);
     });
+
+    // Kiểm tra lỗi xung đột từ PostgreSQL được chuyển thành ConflictException.
+    it.each(['P2004', 'P2034'])(
+        'should convert Prisma error %s to ConflictException',
+        async (errorCode) => {
+            const prismaError =
+                new Prisma.PrismaClientKnownRequestError(
+                    'Database constraint conflict',
+                    {
+                        code: errorCode,
+                        clientVersion: '6.16.2',
+                    },
+                );
+
+            prismaMock.$transaction.mockRejectedValueOnce(
+                prismaError,
+            );
+
+            await expect(
+                service.create({} as any),
+            ).rejects.toThrow(
+                'Ghế vừa được khách khác giữ trên đoạn đường này. Vui lòng chọn ghế hoặc hành trình khác.',
+            );
+        },
+    );
 
     // Kiểm tra BookingService được khởi tạo thành công.
     it('should be defined', () => {
@@ -489,5 +518,208 @@ describe('BookingService', () => {
                 }),
             }),
         );
+    });
+
+    // Không cho phép đặt cùng một ghế hai lần trong một booking.
+    it('should reject duplicate seat IDs in one booking', async () => {
+        const dto = {
+            tripId: 'trip-01',
+            direction: 'OUTBOUND' as const,
+            customerName: 'Nguyen Van A',
+            customerPhone: '0901234567',
+            seats: [
+                {
+                    seatId: 'seat-01',
+                    pickupTripRoutePointId: 'point-01',
+                    dropoffTripRoutePointId: 'point-05',
+                },
+                {
+                    seatId: 'seat-01',
+                    pickupTripRoutePointId: 'point-01',
+                    dropoffTripRoutePointId: 'point-05',
+                },
+            ],
+        };
+
+        await expect(service.create(dto)).rejects.toThrow(
+            BadRequestException,
+        );
+
+        expect(pricingServiceMock.calculatePrice).not.toHaveBeenCalled();
+        expect(tx.booking.create).not.toHaveBeenCalled();
+        expect(tx.seatAllocation.create).not.toHaveBeenCalled();
+    });
+
+    // Kiểm tra hủy booking chưa thanh toán và giải phóng ghế đang giữ.
+    it('should cancel pending booking and release held allocations', async () => {
+        tx.booking.findUnique = jest.fn().mockResolvedValue({
+            id: 'booking-01',
+            status: 'PENDING',
+            paymentStatus: 'UNPAID',
+            seats: [
+                { seatAllocationId: 'allocation-01' },
+                { seatAllocationId: 'allocation-02' },
+            ],
+        });
+
+        tx.booking.updateMany = jest.fn().mockResolvedValue({
+            count: 1,
+        });
+
+        tx.seatAllocation.updateMany = jest.fn().mockResolvedValue({
+            count: 2,
+        });
+
+        const result = await service.cancel('booking-01');
+
+        expect(result).toEqual({
+            message: 'Hủy booking thành công',
+            bookingId: 'booking-01',
+            status: 'CANCELLED',
+        });
+
+        expect(tx.booking.updateMany).toHaveBeenCalledWith(
+            expect.objectContaining({
+                where: expect.objectContaining({
+                    id: 'booking-01',
+                    status: 'PENDING',
+                }),
+                data: expect.objectContaining({
+                    status: 'CANCELLED',
+                    holdExpiresAt: null,
+                }),
+            }),
+        );
+
+        expect(tx.seatAllocation.updateMany).toHaveBeenCalledWith({
+            where: {
+                id: {
+                    in: ['allocation-01', 'allocation-02'],
+                },
+                status: 'HELD',
+            },
+            data: {
+                status: 'RELEASED',
+                holdExpiresAt: null,
+            },
+        });
+    });
+
+    // Kiểm tra tự động hết hạn booking và giải phóng ghế đã giữ.
+    it('should expire pending booking and release held allocations', async () => {
+        prismaMock.booking.findMany.mockResolvedValue([
+            {
+                id: 'booking-01',
+                seats: [
+                    { seatAllocationId: 'allocation-01' },
+                    { seatAllocationId: 'allocation-02' },
+                ],
+            },
+        ]);
+
+        tx.booking.updateMany = jest.fn().mockResolvedValue({
+            count: 1,
+        });
+
+        tx.seatAllocation.updateMany = jest.fn().mockResolvedValue({
+            count: 2,
+        });
+
+        await service.expireHeldBookings();
+
+        expect(prismaMock.booking.findMany).toHaveBeenCalledWith(
+            expect.objectContaining({
+                where: expect.objectContaining({
+                    status: 'PENDING',
+                    paymentStatus: {
+                        in: ['UNPAID', 'FAILED', 'REJECTED'],
+                    },
+                    holdExpiresAt: {
+                        lte: expect.any(Date),
+                    },
+                }),
+            }),
+        );
+
+        expect(tx.booking.updateMany).toHaveBeenCalledWith(
+            expect.objectContaining({
+                where: expect.objectContaining({
+                    id: 'booking-01',
+                    status: 'PENDING',
+                    holdExpiresAt: {
+                        lte: expect.any(Date),
+                    },
+                }),
+                data: {
+                    status: 'EXPIRED',
+                    holdExpiresAt: null,
+                },
+            }),
+        );
+
+        expect(tx.seatAllocation.updateMany).toHaveBeenCalledWith({
+            where: {
+                id: {
+                    in: ['allocation-01', 'allocation-02'],
+                },
+                status: 'HELD',
+            },
+            data: {
+                status: 'EXPIRED',
+                holdExpiresAt: null,
+            },
+        });
+    });
+
+    // Kiểm tra không giải phóng ghế nếu booking đã được tiến trình khác xử lý.
+    it('should not release allocations when booking was already processed', async () => {
+        prismaMock.booking.findMany.mockResolvedValue([
+            {
+                id: 'booking-01',
+                seats: [
+                    { seatAllocationId: 'allocation-01' },
+                ],
+            },
+        ]);
+
+        // Giả lập booking đã được tiến trình khác cập nhật trước.
+        tx.booking.updateMany = jest.fn().mockResolvedValue({
+            count: 0,
+        });
+
+        tx.seatAllocation.updateMany = jest.fn().mockResolvedValue({
+            count: 0,
+        });
+
+        await service.expireHeldBookings();
+
+        expect(tx.booking.updateMany).toHaveBeenCalledTimes(1);
+
+        // Không được giải phóng ghế khi booking không được cập nhật.
+        expect(tx.seatAllocation.updateMany).not.toHaveBeenCalled();
+    });
+
+    // Kiểm tra không cho hủy booking đã thanh toán và không giải phóng ghế.
+    it('should reject cancellation of paid booking', async () => {
+        tx.booking.findUnique = jest.fn().mockResolvedValue({
+            id: 'booking-01',
+            status: 'PENDING',
+            paymentStatus: 'PAID',
+            seats: [
+                { seatAllocationId: 'allocation-01' },
+            ],
+        });
+
+        tx.booking.updateMany = jest.fn();
+        tx.seatAllocation.updateMany = jest.fn();
+
+        await expect(
+            service.cancel('booking-01'),
+        ).rejects.toThrow(
+            'Booking đã có giao dịch thanh toán cần xử lý. Không thể tự động hủy.',
+        );
+
+        expect(tx.booking.updateMany).not.toHaveBeenCalled();
+        expect(tx.seatAllocation.updateMany).not.toHaveBeenCalled();
     });
 });

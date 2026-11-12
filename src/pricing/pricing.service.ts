@@ -134,6 +134,17 @@ export class PricingService {
         ),
         ];
 
+        // Từ chối nếu một ServicePoint được khai báo giá nhiều lần.
+        const servicePointPriceIds = (dto.servicePointPrices ?? []).map(
+            (item) => item.servicePointId,
+        );
+
+        if (new Set(servicePointPriceIds).size !== servicePointPriceIds.length) {
+            throw new BadRequestException(
+                'Không được khai báo trùng ServicePointPrice',
+            );
+        }
+
         const routePoints = await tx.routePoint.findMany({
             where: {
                 id: { in: routePointIds },
