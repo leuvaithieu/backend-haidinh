@@ -556,6 +556,17 @@ export class BookingService {
                 );
             }
 
+              // Chuyển lỗi PostgreSQL 23P01 từ exclusion constraint thành HTTP 409.
+            if (
+                error instanceof Error &&
+                error.message.includes('23P01') &&
+                error.message.includes('seat_allocation_no_overlapping_segments')
+            ) {
+                throw new ConflictException(
+                    'Ghế này đã được đặt hoặc giữ trên đoạn đường đã chọn. Vui lòng chọn ghế khác.',
+                );
+            }
+
             throw error;
         }
     }

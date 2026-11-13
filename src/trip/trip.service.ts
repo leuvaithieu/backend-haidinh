@@ -1,7 +1,9 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import {CreateTripDto, TripPointScheduleDto} from './dto/create-trip.dto';
 import { UpdateTripDto } from './dto/update-trip.dto';
+
+import { PublicTripSearchDto } from './dto/public-trip-search.dto';
 
 
 @Injectable()
@@ -559,6 +561,222 @@ export class TripService {
         });
     }
 
+    // Tìm chuyến công khai theo điểm đón, điểm trả và ngày khởi hành.
+    async searchPublicTrips(query: PublicTripSearchDto) {
+        if (query.fromRoutePointId === query.toRoutePointId) {
+            throw new BadRequestException(
+                'Điểm đón và điểm trả không được trùng nhau',
+            );
+        }
+
+        const routePoints = await this.prisma.routePoint.findMany({
+            where: {
+                id: {
+                    in: [
+                        query.fromRoutePointId,
+                        query.toRoutePointId,
+                    ],
+                },
+            },
+            select: {
+                id: true,
+                routeId: true,
+                name: true,
+                sequence: true,
+                route: {
+                    select: {
+                        id: true,
+                        name: true,
+                        websiteContent: {
+                            select: {
+                                title: true,
+                                isPublished: true,
+                            },
+                        },
+                    },
+                },
+            },
+        });
+
+        if (routePoints.length !== 2) {
+            throw new NotFoundException(
+                'Không tìm thấy điểm đón hoặc điểm trả',
+            );
+        }
+
+        const pickup = routePoints.find(
+            (point) => point.id === query.fromRoutePointId,
+        );
+
+        const dropoff = routePoints.find(
+            (point) => point.id === query.toRoutePointId,
+        );
+
+        if (!pickup || !dropoff) {
+            throw new NotFoundException(
+                'Không tìm thấy điểm đón hoặc điểm trả',
+            );
+        }
+
+        if (pickup.routeId !== dropoff.routeId) {
+            throw new BadRequestException(
+                'Điểm đón và điểm trả phải thuộc cùng một tuyến',
+            );
+        }
+
+        if (!pickup.route.websiteContent?.isPublished) {
+            throw new NotFoundException(
+                'Tuyến đường hiện chưa được công khai',
+            );
+        }
+
+        const validDirection =
+            query.direction === 'OUTBOUND'
+                ? pickup.sequence < dropoff.sequence
+                : pickup.sequence > dropoff.sequence;
+
+        if (!validDirection) {
+            throw new BadRequestException(
+                'Thứ tự điểm đón và điểm trả không phù hợp với chiều di chuyển',
+            );
+        }
+
+        // Xác định khoảng thời gian tìm kiếm theo ngày Việt Nam (UTC+7).
+        const startOfDay = new Date(
+            `${query.date}T00:00:00+07:00`,
+        );
+
+        if (Number.isNaN(startOfDay.getTime())) {
+            throw new BadRequestException(
+                'Ngày khởi hành không hợp lệ',
+            );
+        }
+
+        const endOfDay = new Date(
+            startOfDay.getTime() + 24 * 60 * 60 * 1000,
+        );
+
+        const pickupSchedules =
+            await this.prisma.tripRoutePoint.findMany({
+                where: {
+                    routePointId: pickup.id,
+                    direction: query.direction,
+                    plannedTime: {
+                        gte: startOfDay,
+                        lt: endOfDay,
+                    },
+                    trip: {
+                        routeId: pickup.routeId,
+                        status: 'SCHEDULED',
+                        vehicle: {
+                            status: 'ACTIVE',
+                        },
+                    },
+                },
+                orderBy: {
+                    plannedTime: 'asc',
+                },
+                select: {
+                    id: true,
+                    sequence: true,
+                    plannedTime: true,
+                    trip: {
+                        select: {
+                            id: true,
+                            route: {
+                                select: {
+                                    id: true,
+                                    name: true,
+                                    websiteContent: {
+                                        select: {
+                                            title: true,
+                                        },
+                                    },
+                                },
+                            },
+                            vehicle: {
+                                select: {
+                                    name: true,
+                                    vehicleType: true,
+                                    seatCount: true,
+                                    seatLayout: {
+                                        select: {
+                                            status: true,
+                                            isTemplate: true,
+                                        },
+                                    },
+                                },
+                            },
+                            tripRoutePoints: {
+                                where: {
+                                    routePointId: dropoff.id,
+                                    direction: query.direction,
+                                },
+                                select: {
+                                    id: true,
+                                    sequence: true,
+                                    plannedTime: true,
+                                },
+                            },
+                        },
+                    },
+                },
+            });
+
+        return pickupSchedules
+            .map((schedule) => {
+                const trip = schedule.trip;
+
+                // Chiều đi có sequence tăng, chiều về có sequence giảm.
+                const dropoffSchedule = trip.tripRoutePoints.find(
+                    (point) =>
+                        query.direction === 'OUTBOUND'
+                            ? point.sequence > schedule.sequence
+                            : point.sequence < schedule.sequence,
+                );
+
+                const layout = trip.vehicle.seatLayout;
+
+                if (
+                    !dropoffSchedule ||
+                    !layout ||
+                    layout.status !== 'ACTIVE' ||
+                    layout.isTemplate
+                ) {
+                    return null;
+                }
+
+                return {
+                    tripId: trip.id,
+                    route: {
+                        id: trip.route.id,
+                        name: trip.route.name,
+                        title:
+                            trip.route.websiteContent?.title ??
+                            trip.route.name,
+                    },
+                    direction: query.direction,
+                    pickup: {
+                        tripRoutePointId: schedule.id,
+                        routePointId: pickup.id,
+                        name: pickup.name,
+                        plannedTime: schedule.plannedTime,
+                    },
+                    dropoff: {
+                        tripRoutePointId: dropoffSchedule.id,
+                        routePointId: dropoff.id,
+                        name: dropoff.name,
+                        plannedTime: dropoffSchedule.plannedTime,
+                    },
+                    vehicle: {
+                        name: trip.vehicle.name,
+                        vehicleType: trip.vehicle.vehicleType,
+                        seatCount: trip.vehicle.seatCount,
+                    },
+                };
+            })
+            .filter((trip) => trip !== null);
+    }
     
     async update(id: string, data: UpdateTripDto) {
         const currentTrip = await this.prisma.trip.findUnique({
