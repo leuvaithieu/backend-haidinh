@@ -4,6 +4,7 @@ import {CreateTripDto, TripPointScheduleDto} from './dto/create-trip.dto';
 import { UpdateTripDto } from './dto/update-trip.dto';
 
 import { PublicTripSearchDto } from './dto/public-trip-search.dto';
+import { PublicTripSeatsDto } from './dto/public-trip-seats.dto';
 
 
 @Injectable()
@@ -729,10 +730,7 @@ export class TripService {
 
                 // Chiều đi có sequence tăng, chiều về có sequence giảm.
                 const dropoffSchedule = trip.tripRoutePoints.find(
-                    (point) =>
-                        query.direction === 'OUTBOUND'
-                            ? point.sequence > schedule.sequence
-                            : point.sequence < schedule.sequence,
+                    (point) => point.sequence > schedule.sequence,
                 );
 
                 const layout = trip.vehicle.seatLayout;
@@ -776,6 +774,234 @@ export class TripService {
                 };
             })
             .filter((trip) => trip !== null);
+    }
+
+    // Lấy sơ đồ ghế công khai và xác định ghế còn trống theo đoạn đường khách chọn.
+    async getPublicTripSeats(
+        tripId: string,
+        query: PublicTripSeatsDto,
+    ) {
+        if (
+            query.pickupTripRoutePointId ===
+            query.dropoffTripRoutePointId
+        ) {
+            throw new BadRequestException(
+                'Điểm đón và điểm trả không được trùng nhau',
+            );
+        }
+
+        const now = new Date();
+
+        const trip = await this.prisma.trip.findUnique({
+            where: {
+                id: tripId,
+            },
+            select: {
+                id: true,
+                status: true,
+                route: {
+                    select: {
+                        websiteContent: {
+                            select: {
+                                isPublished: true,
+                            },
+                        },
+                    },
+                },
+                vehicle: {
+                    select: {
+                        status: true,
+                        seatLayout: {
+                            select: {
+                                id: true,
+                                name: true,
+                                status: true,
+                                isTemplate: true,
+                                seats: {
+                                    where: {
+                                        isActive: true,
+                                    },
+                                    orderBy: [
+                                        { level: 'asc' },
+                                        { row: 'asc' },
+                                        { column: 'asc' },
+                                    ],
+                                    select: {
+                                        id: true,
+                                        code: true,
+                                        label: true,
+                                        type: true,
+                                        level: true,
+                                        row: true,
+                                        column: true,
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+                tripRoutePoints: {
+                    where: {
+                        id: {
+                            in: [
+                                query.pickupTripRoutePointId,
+                                query.dropoffTripRoutePointId,
+                            ],
+                        },
+                        direction: query.direction,
+                    },
+                    select: {
+                        id: true,
+                        pointName: true,
+                        direction: true,
+                        sequence: true,
+                        plannedTime: true,
+                    },
+                },
+                tripSeats: {
+                    select: {
+                        seatId: true,
+                        seatAllocations: {
+                            where: {
+                                direction: query.direction,
+                                OR: [
+                                    {
+                                        status: 'BOOKED',
+                                    },
+                                    {
+                                        status: 'HELD',
+                                        holdExpiresAt: {
+                                            gt: now,
+                                        },
+                                    },
+                                ],
+                            },
+                            select: {
+                                pickupSequence: true,
+                                dropoffSequence: true,
+                            },
+                        },
+                    },
+                },
+            },
+        });
+
+        if (!trip) {
+            throw new NotFoundException(
+                'Không tìm thấy chuyến xe',
+            );
+        }
+
+        if (trip.status !== 'SCHEDULED') {
+            throw new BadRequestException(
+                'Chuyến xe hiện không nhận đặt vé',
+            );
+        }
+
+        if (
+            !trip.route.websiteContent?.isPublished
+        ) {
+            throw new NotFoundException(
+                'Tuyến đường hiện chưa được công khai',
+            );
+        }
+
+        if (trip.vehicle.status !== 'ACTIVE') {
+            throw new BadRequestException(
+                'Xe hiện không hoạt động',
+            );
+        }
+
+        const layout = trip.vehicle.seatLayout;
+
+        if (
+            !layout ||
+            layout.status !== 'ACTIVE' ||
+            layout.isTemplate
+        ) {
+            throw new NotFoundException(
+                'Xe chưa có sơ đồ ghế hoạt động',
+            );
+        }
+
+        const pickup = trip.tripRoutePoints.find(
+            (point) =>
+                point.id === query.pickupTripRoutePointId,
+        );
+
+        const dropoff = trip.tripRoutePoints.find(
+            (point) =>
+                point.id === query.dropoffTripRoutePointId,
+        );
+
+        if (!pickup || !dropoff) {
+            throw new BadRequestException(
+                'Điểm đón hoặc điểm trả không thuộc lịch trình chuyến xe',
+            );
+        }
+
+        if (pickup.sequence >= dropoff.sequence) {
+            throw new BadRequestException(
+                'Thứ tự điểm đón và điểm trả không hợp lệ',
+            );
+        }
+
+        const tripSeatMap = new Map(
+            trip.tripSeats.map((tripSeat) => [
+                tripSeat.seatId,
+                tripSeat,
+            ]),
+        );
+
+        const seats = layout.seats.map((seat) => {
+            const tripSeat = tripSeatMap.get(seat.id);
+
+            const isOccupied =
+                tripSeat?.seatAllocations.some(
+                    (allocation) =>
+                        allocation.pickupSequence <
+                            dropoff.sequence &&
+                        allocation.dropoffSequence >
+                            pickup.sequence,
+                ) ?? false;
+
+            return {
+                id: seat.id,
+                code: seat.code,
+                label: seat.label,
+                type: seat.type,
+                level: seat.level,
+                row: seat.row,
+                column: seat.column,
+                isAvailable: !!tripSeat && !isOccupied,
+            };
+        });
+
+        return {
+            tripId: trip.id,
+            direction: query.direction,
+            pickup: {
+                id: pickup.id,
+                name: pickup.pointName,
+                sequence: pickup.sequence,
+                plannedTime: pickup.plannedTime,
+            },
+            dropoff: {
+                id: dropoff.id,
+                name: dropoff.pointName,
+                sequence: dropoff.sequence,
+                plannedTime: dropoff.plannedTime,
+            },
+            layout: {
+                id: layout.id,
+                name: layout.name,
+            },
+            totalSeats: seats.length,
+            availableSeats: seats.filter(
+                (seat) => seat.isAvailable,
+            ).length,
+            seats,
+        };
     }
     
     async update(id: string, data: UpdateTripDto) {
