@@ -3,6 +3,7 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
+  ForbiddenException,
 } from '@nestjs/common';
 import {
   BookingStatus,
@@ -24,6 +25,15 @@ export class PaymentService {
 
     // Khách hàng báo chuyển khoản lần đầu hoặc thanh toán phần tiền còn lại.
     async reportPayment(bookingId: string, dto: ReportPaymentDto) {
+        // Kiểm tra phương thức chuyển khoản có đang được hệ thống cho phép hay không.
+        const transferEnabled =
+            await this.settingsService.getValue('PAYMENT_TRANSFER_ENABLED');
+
+        if (transferEnabled !== 'true') {
+            throw new ForbiddenException(
+                'Hải Định hiện tạm ngừng nhận thanh toán chuyển khoản. Vui lòng liên hệ nhân viên.',
+            );
+        }
         try{
             return await this.prisma.$transaction(
                 async (tx) => {

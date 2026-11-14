@@ -4,6 +4,7 @@ import {
     ConflictException,
     Injectable,
     NotFoundException,
+    ForbiddenException,
 } from '@nestjs/common';
 
 import { randomBytes } from 'crypto';
@@ -27,6 +28,16 @@ export class BookingService {
 
     // Tạo booking và giữ ghế theo từng đoạn đường trong một transaction.
     async create(dto: CreateBookingDto) {
+        // Kiểm tra hệ thống có đang cho phép khách đặt vé trực tuyến hay không.
+        const onlineBookingEnabled =
+            await this.settingsService.getValue('ONLINE_BOOKING_ENABLED');
+
+        if (onlineBookingEnabled === 'false') {
+            throw new ForbiddenException(
+                'Hiện tại Hải Định tạm ngừng nhận đặt vé trực tuyến. Vui lòng liên hệ nhân viên.',
+            );
+        }
+
         const now = new Date();
 
         const holdMinutes =

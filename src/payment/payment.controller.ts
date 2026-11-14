@@ -6,6 +6,7 @@ import {
   Get,
   Post,
   UseGuards,
+  ForbiddenException,
 } from '@nestjs/common';
 
 import { PaymentService } from './payment.service';
@@ -28,6 +29,15 @@ export class PaymentController {
     // Lấy thông tin tài khoản ngân hàng công khai để khách chuyển khoản.
     @Get('bank-info')
     async getBankInfo() {
+        const transferEnabled =
+            await this.settingsService.getValue('PAYMENT_TRANSFER_ENABLED');
+
+        if (transferEnabled !== 'true') {
+            throw new ForbiddenException(
+                'Hải Định hiện tạm ngừng nhận thanh toán chuyển khoản.',
+            );
+        }
+
         const [
             bankName,
             bankCode,
