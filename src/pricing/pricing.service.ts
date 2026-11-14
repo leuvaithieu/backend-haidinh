@@ -445,15 +445,30 @@ export class PricingService {
         await this.prisma.routePricePolicy.findUnique({
             where: { id },
             include: {
-            route: true,
-            baseOriginRoutePoint: true,
-            routePointPrices: {
-                include: { routePoint: true },
-            },
-            servicePointPrices: {
-                include: { servicePoint: true },
-            },
-            priceOverrides: true,
+                route: {
+                    include: {
+                        routePoints: {
+                            include: {
+                                servicePoints: true,
+                            },
+                            orderBy: {
+                                sequence: 'asc',
+                            },
+                        },
+                    },
+                },
+                baseOriginRoutePoint: true,
+                routePointPrices: {
+                    include: {
+                        routePoint: true,
+                    },
+                },
+                servicePointPrices: {
+                    include: {
+                        servicePoint: true,
+                    },
+                },
+                priceOverrides: true,
             },
         });
 

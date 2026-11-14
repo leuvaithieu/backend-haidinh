@@ -879,6 +879,7 @@ export class TripService {
                             select: {
                                 pickupSequence: true,
                                 dropoffSequence: true,
+                                status: true,
                             },
                         },
                     },
@@ -953,17 +954,23 @@ export class TripService {
             ]),
         );
 
+        
+        // Xác định trạng thái ghế theo phân bổ trên đoạn đường khách chọn.
         const seats = layout.seats.map((seat) => {
             const tripSeat = tripSeatMap.get(seat.id);
 
-            const isOccupied =
-                tripSeat?.seatAllocations.some(
+            const overlappingAllocation =
+                tripSeat?.seatAllocations.find(
                     (allocation) =>
-                        allocation.pickupSequence <
-                            dropoff.sequence &&
-                        allocation.dropoffSequence >
-                            pickup.sequence,
-                ) ?? false;
+                        allocation.pickupSequence < dropoff.sequence &&
+                        allocation.dropoffSequence > pickup.sequence,
+                );
+
+            const seatStatus = overlappingAllocation
+                ? overlappingAllocation.status
+                : tripSeat
+                    ? 'AVAILABLE'
+                    : 'UNAVAILABLE';
 
             return {
                 id: seat.id,
@@ -973,7 +980,8 @@ export class TripService {
                 level: seat.level,
                 row: seat.row,
                 column: seat.column,
-                isAvailable: !!tripSeat && !isOccupied,
+                isAvailable: seatStatus === 'AVAILABLE',
+                status: seatStatus,
             };
         });
 
