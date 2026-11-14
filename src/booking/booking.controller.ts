@@ -26,6 +26,18 @@ export class BookingController {
         return this.bookingService.create(dto);
     }
 
+    // Tra cứu booking công khai bằng mã đặt vé và số điện thoại người đặt.
+    @Get('public/lookup')
+    findPublicBooking(
+        @Query('bookingCode') bookingCode: string,
+        @Query('customerPhone') customerPhone: string,
+    ) {
+        return this.bookingService.findPublicBooking(
+            bookingCode,
+            customerPhone,
+        );
+    }
+
     // Chỉ ADMIN và STAFF được xem chi tiết booking.
     @UseGuards(JwtAuthGuard, RolesGuard)
     @Roles('ADMIN', 'STAFF')

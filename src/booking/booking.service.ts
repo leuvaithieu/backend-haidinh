@@ -534,6 +534,7 @@ export class BookingService {
                             customerPhone: booking.customerPhone,
                             seats: createdSeats,
                             totalAmount: booking.totalAmount,
+                            depositAmount: booking.depositAmount,
                             status: booking.status,
                             paymentStatus: booking.paymentStatus,
                             holdExpiresAt: booking.holdExpiresAt,
@@ -569,6 +570,36 @@ export class BookingService {
 
             throw error;
         }
+    }
+
+    // Tra cứu thông tin thanh toán công khai bằng mã booking và số điện thoại người đặt.
+    async findPublicBooking(bookingCode: string, customerPhone: string) {
+        const booking = await this.prisma.booking.findFirst({
+            where: {
+                bookingCode,
+                customerPhone,
+            },
+            select: {
+                id: true,
+                bookingCode: true,
+                customerName: true,
+                customerPhone: true,
+                totalAmount: true,
+                depositAmount: true,
+                paidAmount: true,
+                status: true,
+                paymentStatus: true,
+                holdExpiresAt: true,
+            },
+        });
+
+        if (!booking) {
+            throw new NotFoundException(
+                'Không tìm thấy booking hoặc thông tin tra cứu không chính xác.',
+            );
+        }
+
+        return booking;
     }
 
     // Lấy chi tiết booking, bao gồm ghế, lượt phân bổ, chuyến và xe.
