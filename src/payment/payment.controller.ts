@@ -16,12 +16,39 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
 import { CurrentUser } from '../auth/current-user.decorator';
+import { SettingsService } from '../settings/settings.service';
 
 @Controller('payments')
 export class PaymentController {
-  constructor(private readonly paymentService: PaymentService) {}
+    constructor(
+        private readonly paymentService: PaymentService,
+        private readonly settingsService: SettingsService,
+    ) {}
 
-  // Tiếp nhận thông tin khách hàng báo đã chuyển khoản cho booking.
+    // Lấy thông tin tài khoản ngân hàng công khai để khách chuyển khoản.
+    @Get('bank-info')
+    async getBankInfo() {
+        const [
+            bankName,
+            bankCode,
+            accountNumber,
+            accountName,
+        ] = await Promise.all([
+            this.settingsService.getValue('PAYMENT_BANK_NAME'),
+            this.settingsService.getValue('PAYMENT_BANK_CODE'),
+            this.settingsService.getValue('PAYMENT_ACCOUNT_NUMBER'),
+            this.settingsService.getValue('PAYMENT_ACCOUNT_NAME'),
+        ]);
+
+        return {
+            bankName,
+            bankCode,
+            accountNumber,
+            accountName,
+        };
+    }
+
+    // Tiếp nhận thông tin khách hàng báo đã chuyển khoản cho booking.
     @Post('bookings/:bookingId/report')
     async reportPayment(
         @Param('bookingId') bookingId: string,

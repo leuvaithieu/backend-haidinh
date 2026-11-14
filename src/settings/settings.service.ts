@@ -52,6 +52,40 @@ export class SettingsService implements OnModuleInit {
                 description: 'Thời hạn xử lý giao dịch thanh toán sau khi khách báo chuyển khoản (phút)',
             },
         });
+
+        // Khởi tạo cấu hình tài khoản ngân hàng nhận tiền vé.
+        const bankSettings = [
+            {
+                key: 'PAYMENT_BANK_NAME',
+                value: '',
+                description: 'Tên ngân hàng nhận tiền vé',
+            },
+            {
+                key: 'PAYMENT_BANK_CODE',
+                value: '',
+                description: 'Mã ngân hàng theo chuẩn VietQR',
+            },
+            {
+                key: 'PAYMENT_ACCOUNT_NUMBER',
+                value: '',
+                description: 'Số tài khoản ngân hàng nhận tiền vé',
+            },
+            {
+                key: 'PAYMENT_ACCOUNT_NAME',
+                value: '',
+                description: 'Tên chủ tài khoản ngân hàng nhận tiền vé',
+            },
+        ];
+
+        for (const setting of bankSettings) {
+            await this.prisma.systemSetting.upsert({
+                where: {
+                    key: setting.key,
+                },
+                update: {},
+                create: setting,
+            });
+        }
     }
 
     // Lấy toàn bộ cấu hình hệ thống.
