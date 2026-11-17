@@ -46,12 +46,14 @@ export class PaymentController {
             bankShortName,
             accountNumber,
             accountName,
+            transferContent,
         ] = await Promise.all([
             this.settingsService.getValue('PAYMENT_BANK_NAME'),
             this.settingsService.getValue('PAYMENT_BANK_CODE'),
             this.settingsService.getValue('PAYMENT_BANK_SHORT_NAME'),
             this.settingsService.getValue('PAYMENT_ACCOUNT_NUMBER'),
             this.settingsService.getValue('PAYMENT_ACCOUNT_NAME'),
+            this.settingsService.getValue('PAYMENT_TRANSFER_CONTENT'),
         ]);
 
         // Kiểm tra đủ 5 trường ngân hàng trước khi cung cấp thông tin tạo QR.
@@ -73,7 +75,10 @@ export class PaymentController {
             );
         }
 
-        return bankFields;
+        return {
+            ...bankFields,
+            transferContent: transferContent?.trim() || 'HD',
+        };
     }
 
     // Tiếp nhận thông tin khách hàng báo đã chuyển khoản cho booking.
