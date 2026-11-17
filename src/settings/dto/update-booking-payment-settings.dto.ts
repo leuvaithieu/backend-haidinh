@@ -43,6 +43,11 @@ export class UpdatePaymentSettingsDto {
 
     @IsOptional()
     @IsString()
+    @IsNotEmpty()
+    bankShortName?: string;
+
+    @IsOptional()
+    @IsString()
     @MinLength(5)
     bankAccountNumber?: string;
 

@@ -1,12 +1,14 @@
+
 import {
-  Body,
-  Controller,
-  Param,
-  Patch,
-  Get,
-  Post,
-  UseGuards,
-  ForbiddenException,
+    Body,
+    Controller,
+    Param,
+    Patch,
+    Get,
+    Post,
+    UseGuards,
+    ForbiddenException,
+    BadRequestException,
 } from '@nestjs/common';
 
 import { PaymentService } from './payment.service';
@@ -41,21 +43,37 @@ export class PaymentController {
         const [
             bankName,
             bankCode,
+            bankShortName,
             accountNumber,
             accountName,
         ] = await Promise.all([
             this.settingsService.getValue('PAYMENT_BANK_NAME'),
             this.settingsService.getValue('PAYMENT_BANK_CODE'),
+            this.settingsService.getValue('PAYMENT_BANK_SHORT_NAME'),
             this.settingsService.getValue('PAYMENT_ACCOUNT_NUMBER'),
             this.settingsService.getValue('PAYMENT_ACCOUNT_NAME'),
         ]);
 
-        return {
+        // Kiểm tra đủ 5 trường ngân hàng trước khi cung cấp thông tin tạo QR.
+        const bankFields = {
             bankName,
             bankCode,
+            bankShortName,
             accountNumber,
             accountName,
         };
+
+        const missingFields = Object.entries(bankFields)
+            .filter(([, value]) => !value?.trim())
+            .map(([key]) => key);
+
+        if (missingFields.length > 0) {
+            throw new BadRequestException(
+                'Thông tin tài khoản ngân hàng chưa được cấu hình đầy đủ.',
+            );
+        }
+
+        return bankFields;
     }
 
     // Tiếp nhận thông tin khách hàng báo đã chuyển khoản cho booking.
@@ -79,7 +97,9 @@ export class PaymentController {
     @Get(':paymentId')
     @UseGuards(JwtAuthGuard, RolesGuard)
     @Roles('ADMIN', 'STAFF')
-    async findOne( @Param('paymentId') paymentId: string,) {
+    async findOne(
+        @Param('paymentId') paymentId: string,
+    ) {
         return this.paymentService.findOne(paymentId);
     }
 
@@ -92,8 +112,8 @@ export class PaymentController {
         @CurrentUser() user: { userId: string },
     ) {
         return this.paymentService.confirmPayment(
-        paymentId,
-        user.userId,
+            paymentId,
+            user.userId,
         );
     }
 

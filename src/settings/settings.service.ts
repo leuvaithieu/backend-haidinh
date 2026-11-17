@@ -79,6 +79,11 @@ export class SettingsService implements OnModuleInit {
                 description: 'Mã ngân hàng theo chuẩn VietQR',
             },
             {
+                key: 'PAYMENT_BANK_SHORT_NAME',
+                value: '',
+                description: 'Tên viết tắt ngân hàng theo danh sách VietQR',
+            },
+            {
                 key: 'PAYMENT_ACCOUNT_NUMBER',
                 value: '',
                 description: 'Số tài khoản ngân hàng nhận tiền vé',
@@ -160,6 +165,7 @@ export class SettingsService implements OnModuleInit {
             'PAYMENT_ACCOUNT_NAME',
             'PAYMENT_TRANSFER_CONTENT',
             'PAYMENT_REVIEW_TIMEOUT_MINUTES',
+            'PAYMENT_BANK_SHORT_NAME'
         ];
 
         const settings = await this.prisma.systemSetting.findMany({
@@ -177,6 +183,7 @@ export class SettingsService implements OnModuleInit {
                 values['PAYMENT_TRANSFER_ENABLED'] === 'true',
             bankName: values['PAYMENT_BANK_NAME'] ?? '',
             bankCode: values['PAYMENT_BANK_CODE'] ?? '',
+            bankShortName: values['PAYMENT_BANK_SHORT_NAME'] ?? '',
             bankAccountNumber: values['PAYMENT_ACCOUNT_NUMBER'] ?? '',
             bankAccountName: values['PAYMENT_ACCOUNT_NAME'] ?? '',
             transferContent: values['PAYMENT_TRANSFER_CONTENT'] ?? 'HAIDINH',
@@ -255,6 +262,11 @@ export class SettingsService implements OnModuleInit {
                 description: 'Mã ngân hàng theo chuẩn VietQR',
             },
             {
+                key: 'PAYMENT_BANK_SHORT_NAME',
+                value: data.bankShortName,
+                description: 'Tên viết tắt ngân hàng theo danh sách VietQR',
+            },
+            {
                 key: 'PAYMENT_ACCOUNT_NUMBER',
                 value: data.bankAccountNumber,
                 description: 'Số tài khoản ngân hàng nhận tiền vé',
@@ -275,6 +287,101 @@ export class SettingsService implements OnModuleInit {
                 description: 'Thời hạn xử lý giao dịch thanh toán (phút)',
             },
         ];
+
+        // Kiểm tra đủ thông tin ngân hàng trước khi cho phép bật chuyển khoản.
+        const currentSettings = await this.prisma.systemSetting.findMany({
+            where: {
+                key: {
+                    in: [
+                        'PAYMENT_TRANSFER_ENABLED',
+                        'PAYMENT_BANK_CODE',
+                        'PAYMENT_BANK_NAME',
+                        'PAYMENT_BANK_SHORT_NAME',
+                        'PAYMENT_ACCOUNT_NUMBER',
+                        'PAYMENT_ACCOUNT_NAME',
+                    ],
+                },
+            },
+        });
+
+        const currentValues = Object.fromEntries(
+            currentSettings.map((setting) => [setting.key, setting.value]),
+        );
+
+        const getEffectiveValue = (
+            key: string,
+            incomingValue: string | number | boolean | undefined,
+            currentValue: string | undefined,
+        ) =>
+            incomingValue !== undefined
+                ? String(incomingValue).trim()
+                : (currentValue ?? '').trim();
+
+        const effectiveTransferEnabled = getEffectiveValue(
+            'PAYMENT_TRANSFER_ENABLED',
+            data.transferEnabled,
+            currentValues['PAYMENT_TRANSFER_ENABLED'],
+        );
+
+        if (effectiveTransferEnabled === 'true') {
+            const requiredBankFields = [
+                {
+                    key: 'PAYMENT_BANK_CODE',
+                    value: getEffectiveValue(
+                        'PAYMENT_BANK_CODE',
+                        data.bankCode,
+                        currentValues['PAYMENT_BANK_CODE'],
+                    ),
+                    label: 'Mã ngân hàng',
+                },
+                {
+                    key: 'PAYMENT_BANK_NAME',
+                    value: getEffectiveValue(
+                        'PAYMENT_BANK_NAME',
+                        data.bankName,
+                        currentValues['PAYMENT_BANK_NAME'],
+                    ),
+                    label: 'Tên ngân hàng',
+                },
+                {
+                    key: 'PAYMENT_BANK_SHORT_NAME',
+                    value: getEffectiveValue(
+                        'PAYMENT_BANK_SHORT_NAME',
+                        data.bankShortName,
+                        currentValues['PAYMENT_BANK_SHORT_NAME'],
+                    ),
+                    label: 'Tên viết tắt ngân hàng',
+                },
+                {
+                    key: 'PAYMENT_ACCOUNT_NUMBER',
+                    value: getEffectiveValue(
+                        'PAYMENT_ACCOUNT_NUMBER',
+                        data.bankAccountNumber,
+                        currentValues['PAYMENT_ACCOUNT_NUMBER'],
+                    ),
+                    label: 'Số tài khoản',
+                },
+                {
+                    key: 'PAYMENT_ACCOUNT_NAME',
+                    value: getEffectiveValue(
+                        'PAYMENT_ACCOUNT_NAME',
+                        data.bankAccountName,
+                        currentValues['PAYMENT_ACCOUNT_NAME'],
+                    ),
+                    label: 'Tên chủ tài khoản',
+                },
+            ];
+
+            const missingFields = requiredBankFields
+                .filter((field) => !field.value)
+                .map((field) => field.label);
+
+            if (missingFields.length > 0) {
+                throw new BadRequestException(
+                    `Không thể bật thanh toán chuyển khoản. Thiếu: ${missingFields.join(', ')}`,
+                );
+            }
+        }
 
         const results: SystemSetting[] = [];
 
@@ -408,6 +515,15 @@ export class SettingsService implements OnModuleInit {
             }
         }
 
+        if (
+            key === 'PAYMENT_BANK_SHORT_NAME' &&
+            !value.trim()
+        ) {
+            throw new BadRequestException(
+                'Tên viết tắt ngân hàng không được để trống',
+            );
+        }
+
         if (key === 'PAYMENT_ACCOUNT_NUMBER') {
             if (!/^[0-9]{5,30}$/.test(value.trim())) {
                 throw new BadRequestException(
@@ -487,6 +603,7 @@ export class SettingsService implements OnModuleInit {
             'PAYMENT_TRANSFER_ENABLED',
             'PAYMENT_BANK_NAME',
             'PAYMENT_BANK_CODE',
+            'PAYMENT_BANK_SHORT_NAME',
             'PAYMENT_ACCOUNT_NUMBER',
             'PAYMENT_ACCOUNT_NAME',
             'PAYMENT_TRANSFER_CONTENT',
