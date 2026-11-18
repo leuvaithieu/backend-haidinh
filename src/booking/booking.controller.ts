@@ -65,9 +65,10 @@ export class BookingController {
         return this.bookingService.cancel(id);
     }
 
-    // Hủy booking đã xác nhận, ghi nhận nhân viên và lý do hủy.
-    @Post(':id/cancel-confirmed')
+    // Hủy booking đã xác nhận, chỉ ADMIN và STAFF được phép thực hiện.
+    @UseGuards(JwtAuthGuard, RolesGuard)
     @Roles('ADMIN', 'STAFF')
+    @Post(':id/cancel-confirmed')
     async cancelConfirmedBooking(
         @Param('id') id: string,
         @Body() dto: CancelConfirmedBookingDto,
@@ -76,7 +77,7 @@ export class BookingController {
         return this.bookingService.cancelConfirmedBooking(
             id,
             dto,
-            req.user.id,
+            req.user.userId,
         );
     }
 }

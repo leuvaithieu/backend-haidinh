@@ -15,6 +15,8 @@ import { RefundStatus } from '@prisma/client';
 
 import { RefundService } from './refund.service';
 import { RejectRefundDto } from './dto/reject-refund.dto';
+import { CompleteRefundDto } from './dto/complete-refund.dto';
+import { FailRefundDto } from './dto/fail-refund.dto';
 
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/roles.guard';
@@ -52,8 +54,56 @@ export class RefundController {
     ) {
         return this.refundService.approve(
             id,
-            req.user.id,
+            req.user.userId,
         );
+    }
+
+    // Bắt đầu thực hiện chuyển khoản hoàn tiền cho khách.
+    @Patch(':id/start-processing')
+    startProcessing(
+        @Param('id') id: string,
+        @Req() req: any,
+    ) {
+        return this.refundService.startProcessing(
+            id,
+            req.user.userId,
+        );
+    }
+
+    // Xác nhận đã chuyển khoản hoàn tiền thành công.
+    @Patch(':id/complete')
+    completeRefund(
+        @Param('id') id: string,
+        @Body() dto: CompleteRefundDto,
+        @Req() req: any,
+    ) {
+        return this.refundService.completeRefund(
+            id,
+            dto.bankTransferReference,
+            req.user.userId,
+        );
+    }
+
+    // Ghi nhận giao dịch chuyển khoản hoàn tiền thất bại.
+    @Patch(':id/fail')
+    failRefund(
+        @Param('id') id: string,
+        @Body() dto: FailRefundDto,
+        @Req() req: any,
+    ) {
+        return this.refundService.failRefund(
+            id,
+            dto.failureReason,
+            req.user.userId,
+        );
+    }
+
+    // Khôi phục yêu cầu hoàn tiền thất bại để nhân viên xử lý lại.
+    @Patch(':id/retry')
+    retryRefund(
+        @Param('id') id: string,
+    ) {
+        return this.refundService.retryRefund(id);
     }
 
     // Từ chối yêu cầu hoàn tiền và lưu lý do.
@@ -66,7 +116,7 @@ export class RefundController {
         return this.refundService.reject(
             id,
             dto.reason,
-            req.user.id,
+            req.user.userId,
         );
     }
 }

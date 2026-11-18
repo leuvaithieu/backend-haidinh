@@ -941,11 +941,7 @@ export class BookingService {
         dto: CancelConfirmedBookingDto,
         cancelledById: string,
     ) {
-        const reason = dto.reason.trim();
-
-        if (!reason) {
-            throw new BadRequestException('Vui lòng nhập lý do hủy booking.');
-        }
+        const reason = dto.reason?.trim() || null;
 
         return this.prisma.$transaction(async (tx) => {
             // Khóa booking để tránh các giao dịch hủy hoặc xác nhận thanh toán xử lý đồng thời.
@@ -1092,37 +1088,6 @@ export class BookingService {
                 );
             }
 
-            // Tạo yêu cầu hoàn tiền nếu booking đã nhận được tiền thanh toán.
-            let refund: Prisma.RefundGetPayload<{
-                select: {
-                    id: true;
-                    requestedAmount: true;
-                    approvedAmount: true;
-                    status: true;
-                    reason: true;
-                    createdAt: true;
-                };
-            }> | null = null;
-
-            if (booking.paidAmount > 0) {
-                refund = await tx.refund.create({
-                    data: {
-                        bookingId: booking.id,
-                        requestedAmount: booking.paidAmount,
-                        reason,
-                        status: 'REQUESTED',
-                    },
-                    select: {
-                        id: true,
-                        requestedAmount: true,
-                        approvedAmount: true,
-                        status: true,
-                        reason: true,
-                        createdAt: true,
-                    },
-                });
-            }
-
             return {
                 message: 'Hủy booking đã xác nhận thành công.',
                 bookingId: id,
@@ -1130,7 +1095,6 @@ export class BookingService {
                 cancelledTicketCount: cancelledTickets.count,
                 releasedSeatCount: releasedAllocations.count,
                 reason,
-                refund,
             };
         });
     }

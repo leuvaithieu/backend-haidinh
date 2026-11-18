@@ -270,7 +270,7 @@ export class EmailNotificationProvider implements NotificationProvider {
     });
 
     return {
-      success: (result.accepted?.length ?? 0) > 0,
+      success: (result.accepted?.length ?? 0) > 0 && (result.rejected?.length ?? 0) === 0,
       providerMessageId: result.messageId,
     };
   }

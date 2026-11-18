@@ -31,7 +31,7 @@ export class TicketController {
         @Body() dto: CheckInTicketDto,
         @Req() req: any,
     ) {
-        return this.ticketService.checkIn(dto, req.user.id);
+        return this.ticketService.checkIn(dto, req.user.userId);
     }
 
     // Lấy danh sách vé của một chuyến xe, hỗ trợ lọc theo trạng thái.

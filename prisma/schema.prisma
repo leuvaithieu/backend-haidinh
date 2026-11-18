@@ -842,8 +842,9 @@ model Refund {
 
   status RefundStatus @default(REQUESTED)
 
-  reason          String?
-  rejectionReason String?
+  reason                   String?
+  rejectionReason          String?
+  processingFailureReason String?
 
   reviewedById String?
   reviewedBy   User?     @relation("RefundReviewedBy", fields: [reviewedById], references: [id], onDelete: SetNull)
