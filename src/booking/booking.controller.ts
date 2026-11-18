@@ -1,18 +1,20 @@
 
 import {
-  Body,
-  Controller,
-  Get,
-  Param,
-  Post,
-  Patch,
-  Query,
+    Body,
+    Controller,
+    Get,
+    Param,
+    Post,
+    Patch,
+    Query,
+    UseGuards,
+    Req
 } from '@nestjs/common';
 import { BookingService } from './booking.service';
 import { CreateBookingDto } from './dto/create-booking.dto';
 import { QueryBookingDto } from './dto/query-booking.dto';
+import { CancelConfirmedBookingDto } from './dto/cancel-confirmed-booking.dto';
 
-import { UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
@@ -61,5 +63,20 @@ export class BookingController {
     @Patch(':id/cancel')
     cancel(@Param('id') id: string) {
         return this.bookingService.cancel(id);
+    }
+
+    // Hủy booking đã xác nhận, ghi nhận nhân viên và lý do hủy.
+    @Post(':id/cancel-confirmed')
+    @Roles('ADMIN', 'STAFF')
+    async cancelConfirmedBooking(
+        @Param('id') id: string,
+        @Body() dto: CancelConfirmedBookingDto,
+        @Req() req: any,
+    ) {
+        return this.bookingService.cancelConfirmedBooking(
+            id,
+            dto,
+            req.user.id,
+        );
     }
 }

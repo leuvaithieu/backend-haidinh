@@ -77,7 +77,7 @@ export class PaymentController {
 
         return {
             ...bankFields,
-            transferContent: transferContent?.trim() || 'HD',
+            transferContent: transferContent?.trim() || null,
         };
     }
 

@@ -39,18 +39,6 @@ export class SettingsService implements OnModuleInit {
 
         await this.prisma.systemSetting.upsert({
             where: {
-                key: 'MIN_DEPOSIT_AMOUNT',
-            },
-            update: {},
-            create: {
-                key: 'MIN_DEPOSIT_AMOUNT',
-                value: '300000',
-                description: 'Số tiền đặt cọc tối thiểu khi khách đặt vé (VND)',
-            },
-        });
-
-        await this.prisma.systemSetting.upsert({
-            where: {
                 key: 'PAYMENT_REVIEW_TIMEOUT_MINUTES',
             },
             update: {},
@@ -149,9 +137,10 @@ export class SettingsService implements OnModuleInit {
             bookingHoldMinutes: Number(
                 values['BOOKING_HOLD_MINUTES'] ?? 20,
             ),
-            minDepositAmount: Number(
-                values['MIN_DEPOSIT_AMOUNT'] ?? 300000,
-            ),
+            minDepositAmount:
+                values['MIN_DEPOSIT_AMOUNT'] !== undefined
+                    ? Number(values['MIN_DEPOSIT_AMOUNT'])
+                    : null,
         };
     }
 
@@ -453,6 +442,27 @@ export class SettingsService implements OnModuleInit {
 
         if (!Number.isInteger(numberValue) || numberValue < 0) {
             return defaultValue;
+        }
+
+        return numberValue;
+    }
+
+    // Lấy cấu hình số bắt buộc, báo lỗi nếu quản trị viên chưa thiết lập hoặc giá trị không hợp lệ.
+    async getRequiredNumberValue(key: string): Promise<number> {
+        const value = await this.getValue(key);
+
+        if (value === null || value.trim() === '') {
+            throw new BadRequestException(
+                `Cấu hình ${key} chưa được quản trị viên thiết lập.`,
+            );
+        }
+
+        const numberValue = Number(value);
+
+        if (!Number.isSafeInteger(numberValue) || numberValue <= 0) {
+            throw new BadRequestException(
+                `Cấu hình ${key} không hợp lệ.`,
+            );
         }
 
         return numberValue;

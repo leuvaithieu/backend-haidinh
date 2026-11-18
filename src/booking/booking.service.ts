@@ -15,6 +15,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { SettingsService } from '../settings/settings.service';
 import { CreateBookingDto } from './dto/create-booking.dto';
 import { QueryBookingDto } from './dto/query-booking.dto';
+import { CancelConfirmedBookingDto } from './dto/cancel-confirmed-booking.dto';
 
 import { PricingService } from '../pricing/pricing.service';
 
@@ -47,13 +48,11 @@ export class BookingService {
             )
         ;
 
-        // Lấy mức đặt cọc tối thiểu hiện tại từ cấu hình hệ thống.
+        // Lấy mức đặt cọc tối thiểu do quản trị viên cấu hình.
         const minDepositAmount =
-            await this.settingsService.getNumberValue(
+            await this.settingsService.getRequiredNumberValue(
                 'MIN_DEPOSIT_AMOUNT',
-                300000,
-            )
-        ;
+            );
         const holdExpiresAt = new Date(
             now.getTime() + holdMinutes * 60 * 1000,
         );
@@ -401,7 +400,8 @@ export class BookingService {
                             );
 
                         if (allocationIds.length > 0) {
-                            await tx.seatAllocation.updateMany({
+                            // Chuyển toàn bộ lượt phân bổ ghế đang HELD sang EXPIRED.
+                            const expiredAllocations = await tx.seatAllocation.updateMany({
                                 where: {
                                     id: {
                                         in: allocationIds,
@@ -413,6 +413,13 @@ export class BookingService {
                                     holdExpiresAt: null,
                                 },
                             });
+
+                            // Rollback transaction nếu không giải phóng được toàn bộ ghế.
+                            if (expiredAllocations.count !== allocationIds.length) {
+                                throw new ConflictException(
+                                    'Không thể giải phóng toàn bộ ghế của Booking đã hết hạn.',
+                                );
+                            }
                         }
                     }
 
@@ -585,10 +592,24 @@ export class BookingService {
 
     // Tra cứu thông tin thanh toán công khai bằng mã booking và số điện thoại người đặt.
     async findPublicBooking(bookingCode: string, customerPhone: string) {
+        // Kiểm tra thông tin bắt buộc trước khi tra cứu booking công khai.
+        if (
+            typeof bookingCode !== 'string' ||
+            typeof customerPhone !== 'string' ||
+            !bookingCode.trim() ||
+            !customerPhone.trim() ||
+            bookingCode.trim().length > 50 ||
+            customerPhone.trim().length > 20
+        ) {
+            throw new BadRequestException(
+                'Vui lòng nhập mã đặt vé và số điện thoại hợp lệ.',
+            );
+        }
+
         const booking = await this.prisma.booking.findFirst({
             where: {
-                bookingCode,
-                customerPhone,
+                bookingCode: bookingCode.trim(),
+                customerPhone: customerPhone.trim(),
             },
             select: {
                 id: true,
@@ -601,6 +622,79 @@ export class BookingService {
                 status: true,
                 paymentStatus: true,
                 holdExpiresAt: true,
+                direction: true,
+
+                // Thông tin chuyến xe.
+                trip: {
+                    select: {
+                        plannedDeparture: true,
+                        plannedArrival: true,
+                        route: {
+                            select: {
+                                name: true,
+                            },
+                        },
+                        vehicle: {
+                            select: {
+                                name: true,
+                                licensePlate: true,
+                            },
+                        },
+                    },
+                },
+
+                // Danh sách ghế và vé tương ứng.
+                seats: {
+                    select: {
+                        id: true,
+                        price: true,
+                        passengerName: true,
+                        passengerPhone: true,
+
+                        // Thông tin vé và mã QR.
+                        ticket: {
+                            select: {
+                                ticketCode: true,
+                                qrToken: true,
+                                status: true,
+                                issuedAt: true,
+                                checkedInAt: true,
+                                cancelledAt: true,
+                            },
+                        },
+
+                        // Thông tin ghế.
+                        seatAllocation: {
+                            select: {
+                                tripSeat: {
+                                    select: {
+                                        seat: {
+                                            select: {
+                                                code: true,
+                                                label: true,
+                                            },
+                                        },
+                                    },
+                                },
+                            },
+                        },
+
+                        // Điểm đón và điểm trả.
+                        pickupTripRoutePoint: {
+                            select: {
+                                pointName: true,
+                                plannedTime: true,
+                            },
+                        },
+
+                        dropoffTripRoutePoint: {
+                            select: {
+                                pointName: true,
+                                plannedTime: true,
+                            },
+                        },
+                    },
+                },
             },
         });
 
@@ -656,11 +750,19 @@ export class BookingService {
     
     // Lấy danh sách booking theo bộ lọc và phân trang.
     async findAll(query: QueryBookingDto) {
-        const page = Math.max(1, Number(query.page) || 1);
-        const limit = Math.min(
-            100,
-            Math.max(1, Number(query.limit) || 20),
-        );
+        // Chuẩn hóa số trang thành số nguyên hợp lệ.
+        const requestedPage = Number(query.page);
+        const page =
+            Number.isSafeInteger(requestedPage) && requestedPage > 0
+                ? requestedPage
+                : 1;
+
+        // Chuẩn hóa giới hạn bản ghi, mặc định 20 và tối đa 100.
+        const requestedLimit = Number(query.limit);
+        const limit =
+            Number.isSafeInteger(requestedLimit) && requestedLimit > 0
+                ? Math.min(requestedLimit, 100)
+                : 20;
 
         const skip = (page - 1) * limit;
 
@@ -804,7 +906,8 @@ export class BookingService {
             );
 
             if (allocationIds.length > 0) {
-                await tx.seatAllocation.updateMany({
+                // Giải phóng toàn bộ lượt phân bổ ghế đang HELD của Booking.
+                const releasedAllocations = await tx.seatAllocation.updateMany({
                     where: {
                         id: {
                             in: allocationIds,
@@ -816,6 +919,13 @@ export class BookingService {
                         holdExpiresAt: null,
                     },
                 });
+
+                // Đảm bảo tất cả ghế của Booking đều được giải phóng thành công.
+                if (releasedAllocations.count !== allocationIds.length) {
+                    throw new ConflictException(
+                        'Không thể giải phóng toàn bộ ghế của Booking. Giao dịch hủy đã được hoàn tác.',
+                    );
+                }
             }
 
             return {
@@ -825,12 +935,213 @@ export class BookingService {
             };
         });
     }
+    // Hủy booking đã xác nhận, đồng bộ trạng thái vé và giải phóng ghế trong một transaction.
+    async cancelConfirmedBooking(
+        id: string,
+        dto: CancelConfirmedBookingDto,
+        cancelledById: string,
+    ) {
+        const reason = dto.reason.trim();
+
+        if (!reason) {
+            throw new BadRequestException('Vui lòng nhập lý do hủy booking.');
+        }
+
+        return this.prisma.$transaction(async (tx) => {
+            // Khóa booking để tránh các giao dịch hủy hoặc xác nhận thanh toán xử lý đồng thời.
+            await tx.$queryRaw<Array<{ id: string }>>`
+                SELECT "id"
+                FROM "Booking"
+                WHERE "id" = ${id}
+                FOR UPDATE
+            `;
+
+            // Lấy booking cùng danh sách ghế và vé đã phát hành.
+            const booking = await tx.booking.findUnique({
+                where: {
+                    id,
+                },
+                include: {
+                    seats: {
+                        select: {
+                            seatAllocationId: true,
+                            ticket: {
+                                select: {
+                                    id: true,
+                                    status: true,
+                                },
+                            },
+                        },
+                    },
+                },
+            });
+
+            if (!booking) {
+                throw new NotFoundException('Không tìm thấy booking.');
+            }
+
+            // Chỉ cho phép hủy booking đã xác nhận.
+            if (booking.status !== 'CONFIRMED') {
+                throw new BadRequestException(
+                    'Chỉ có thể hủy booking đã được xác nhận.',
+                );
+            }
+
+            if (booking.seats.length === 0) {
+                throw new BadRequestException(
+                    'Booking không có ghế để xử lý hủy.',
+                );
+            }
+
+            // Đảm bảo mỗi ghế đều đã có vé được phát hành.
+            const tickets = booking.seats.map((seat) => seat.ticket);
+
+            if (tickets.some((ticket) => !ticket)) {
+                throw new ConflictException(
+                    'Booking chưa có đầy đủ vé. Không thể thực hiện hủy.',
+                );
+            }
+
+            // Không cho phép hủy booking có khách đã check-in.
+            if (
+                tickets.some(
+                    (ticket) => ticket!.status === 'CHECKED_IN',
+                )
+            ) {
+                throw new BadRequestException(
+                    'Booking có vé đã check-in. Không thể hủy theo quy trình thông thường.',
+                );
+            }
+
+            // Chỉ chấp nhận các vé đang ở trạng thái ISSUED.
+            if (
+                tickets.some(
+                    (ticket) => ticket!.status !== 'ISSUED',
+                )
+            ) {
+                throw new ConflictException(
+                    'Trạng thái vé không hợp lệ để hủy booking.',
+                );
+            }
+
+            const ticketIds = tickets.map((ticket) => ticket!.id);
+
+            const allocationIds = booking.seats.map(
+                (seat) => seat.seatAllocationId,
+            );
+
+            // Chuyển booking sang CANCELLED.
+            const cancelledBooking = await tx.booking.updateMany({
+                where: {
+                    id,
+                    status: 'CONFIRMED',
+                },
+                data: {
+                    status: 'CANCELLED',
+                    holdExpiresAt: null,
+                    cancelledAt: new Date(),
+                    cancellationReason: reason,
+                    cancelledById,
+                },
+            });
+
+            if (cancelledBooking.count !== 1) {
+                throw new ConflictException(
+                    'Booking vừa được xử lý bởi một yêu cầu khác.',
+                );
+            }
+
+            // Hủy toàn bộ vé đang được phát hành.
+            const cancelledTickets = await tx.ticket.updateMany({
+                where: {
+                    id: {
+                        in: ticketIds,
+                    },
+                    status: 'ISSUED',
+                },
+                data: {
+                    status: 'CANCELLED',
+                    cancelledAt: new Date(),
+                },
+            });
+
+            if (cancelledTickets.count !== ticketIds.length) {
+                throw new ConflictException(
+                    'Không thể hủy toàn bộ vé. Giao dịch đã được hoàn tác.',
+                );
+            }
+
+            // Giải phóng toàn bộ ghế đang được đặt.
+            const releasedAllocations =
+                await tx.seatAllocation.updateMany({
+                    where: {
+                        id: {
+                            in: allocationIds,
+                        },
+                        status: 'BOOKED',
+                    },
+                    data: {
+                        status: 'RELEASED',
+                        holdExpiresAt: null,
+                    },
+                });
+
+            if (releasedAllocations.count !== allocationIds.length) {
+                throw new ConflictException(
+                    'Không thể giải phóng toàn bộ ghế. Giao dịch đã được hoàn tác.',
+                );
+            }
+
+            // Tạo yêu cầu hoàn tiền nếu booking đã nhận được tiền thanh toán.
+            let refund: Prisma.RefundGetPayload<{
+                select: {
+                    id: true;
+                    requestedAmount: true;
+                    approvedAmount: true;
+                    status: true;
+                    reason: true;
+                    createdAt: true;
+                };
+            }> | null = null;
+
+            if (booking.paidAmount > 0) {
+                refund = await tx.refund.create({
+                    data: {
+                        bookingId: booking.id,
+                        requestedAmount: booking.paidAmount,
+                        reason,
+                        status: 'REQUESTED',
+                    },
+                    select: {
+                        id: true,
+                        requestedAmount: true,
+                        approvedAmount: true,
+                        status: true,
+                        reason: true,
+                        createdAt: true,
+                    },
+                });
+            }
+
+            return {
+                message: 'Hủy booking đã xác nhận thành công.',
+                bookingId: id,
+                status: 'CANCELLED',
+                cancelledTicketCount: cancelledTickets.count,
+                releasedSeatCount: releasedAllocations.count,
+                reason,
+                refund,
+            };
+        });
+    }
 
     // Tự động hết hạn booking chưa thanh toán và giải phóng SeatAllocation.
+    
     @Cron(CronExpression.EVERY_MINUTE)
     async expireHeldBookings() {
         const now = new Date();
 
+        // Chỉ lấy ID các booking có khả năng đã hết hạn.
         const expiredBookings = await this.prisma.booking.findMany({
             where: {
                 status: 'PENDING',
@@ -843,11 +1154,6 @@ export class BookingService {
             },
             select: {
                 id: true,
-                seats: {
-                    select: {
-                        seatAllocationId: true,
-                    },
-                },
             },
         });
 
@@ -871,17 +1177,38 @@ export class BookingService {
                     },
                 });
 
+                // Booking đã được xử lý bởi tiến trình khác hoặc không còn đủ điều kiện.
                 if (result.count !== 1) {
                     return;
                 }
 
-                // Chỉ giải phóng các lượt phân bổ đang HELD.
-                const allocationIds = booking.seats.map(
+                // Lấy danh sách ghế bên trong transaction để sử dụng dữ liệu mới nhất.
+                const currentBooking = await tx.booking.findUnique({
+                    where: {
+                        id: booking.id,
+                    },
+                    select: {
+                        seats: {
+                            select: {
+                                seatAllocationId: true,
+                            },
+                        },
+                    },
+                });
+
+                if (!currentBooking) {
+                    throw new NotFoundException(
+                        'Không tìm thấy booking khi giải phóng ghế hết hạn.',
+                    );
+                }
+
+                const allocationIds = currentBooking.seats.map(
                     (seat) => seat.seatAllocationId,
                 );
 
                 if (allocationIds.length > 0) {
-                    await tx.seatAllocation.updateMany({
+                    // Chuyển toàn bộ ghế đang HELD sang EXPIRED.
+                    const expiredAllocations = await tx.seatAllocation.updateMany({
                         where: {
                             id: {
                                 in: allocationIds,
@@ -893,8 +1220,16 @@ export class BookingService {
                             holdExpiresAt: null,
                         },
                     });
+
+                    // Rollback nếu không giải phóng được toàn bộ ghế của Booking.
+                    if (expiredAllocations.count !== allocationIds.length) {
+                        throw new ConflictException(
+                            'Không thể giải phóng toàn bộ ghế của Booking đã hết hạn.',
+                        );
+                    }
                 }
             });
         }
     }
+
 }

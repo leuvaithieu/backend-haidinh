@@ -1152,7 +1152,7 @@ describe('PaymentService', () => {
                             tripSeat: {
                                 seat: {
                                     id: 'seat-1',
-                                    seatNumber: 'A01',
+                                    code:'A01'
                                 },
                             },
                         },
@@ -1207,7 +1207,7 @@ describe('PaymentService', () => {
         expect(result).toBe(paymentDetails);
         expect(result.booking.trip.route.id).toBe('route-1');
         expect(result.booking.trip.vehicle.id).toBe('vehicle-1');
-        expect(result.booking.seats[0].seatAllocation.tripSeat.seat.seatNumber)
+        expect(result.booking.seats[0].seatAllocation.tripSeat.seat.code)
             .toBe('A01');
     });
 });

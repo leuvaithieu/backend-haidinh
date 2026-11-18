@@ -22,11 +22,43 @@ import { BookingModule } from './booking/booking.module';
 import { SettingsModule } from './settings/settings.module';
 import { PaymentModule } from './payment/payment.module';
 import { PricingModule } from './pricing/pricing.module';
-
+import { TicketModule } from './ticket/ticket.module';
+import { RefundModule } from './refund/refund.module';
+import { NotificationModule } from './notification/notification.module';
+import { ConfigModule } from '@nestjs/config';
 
 @Module({
-  imports: [ScheduleModule.forRoot(),PrismaModule, CustomerModule, RouteModule,RoutePointModule ,ServicePointModule, VehicleModule, DriverModule, UserModule, AuthModule, AssistantModule, TripModule, RouteSegmentModule, ArticleModule, PublicArticleModule, UploadModule, SeatLayoutModule, BookingModule, SettingsModule,PaymentModule, PricingModule],
+  imports: [
+    ScheduleModule.forRoot(),
+    ConfigModule.forRoot({
+      isGlobal: true,
+    }),
+    PrismaModule,
+    CustomerModule,
+    RouteModule,
+    RoutePointModule,
+    ServicePointModule,
+    VehicleModule,
+    DriverModule,
+    UserModule,
+    AuthModule,
+    AssistantModule,
+    TripModule,
+    RouteSegmentModule,
+    ArticleModule,
+    PublicArticleModule,
+    UploadModule,
+    SeatLayoutModule,
+    BookingModule,
+    SettingsModule,
+    PaymentModule,
+    PricingModule,
+    TicketModule,
+    RefundModule,
+    NotificationModule,
+  ],
   controllers: [AppController],
   providers: [AppService],
 })
+
 export class AppModule {}

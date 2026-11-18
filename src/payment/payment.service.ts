@@ -4,23 +4,31 @@ import {
   Injectable,
   NotFoundException,
   ForbiddenException,
+  Logger
 } from '@nestjs/common';
 import {
   BookingStatus,
   PaymentMethod,
   PaymentStatus,
   Prisma,
+  NotificationChannel
 } from '@prisma/client';
+
+import { randomBytes } from 'crypto';
+
 import { PrismaService } from '../prisma/prisma.service';
 import { ReportPaymentDto } from './dto/report-payment.dto';
 import { RejectPaymentDto } from './dto/reject-payment.dto';
 import { SettingsService } from '../settings/settings.service';
+import { NotificationService } from '../notification/notification.service';
 
 @Injectable()
 export class PaymentService {
+    private readonly logger = new Logger(PaymentService.name);
     constructor(
         private readonly prisma: PrismaService,
         private readonly settingsService: SettingsService,
+        private readonly notificationService: NotificationService,
     ) {}
 
     // Khách hàng báo chuyển khoản lần đầu hoặc thanh toán phần tiền còn lại.
@@ -45,12 +53,31 @@ export class PaymentService {
                         FOR UPDATE
                     `
                     ;
+                    
                     const booking = await tx.booking.findUnique({
                         where: { id: bookingId },
                         include: {
                             payments: true,
                         },
                     });
+
+                    if (!booking) {
+                        throw new NotFoundException(
+                            'Không tìm thấy booking hoặc thông tin xác minh không chính xác.',
+                        );
+                    }
+
+                    // Xác minh mã đặt vé và số điện thoại trước khi tiếp nhận thanh toán.
+                    const isValidBookingOwner =
+                        booking.bookingCode === dto.bookingCode.trim() &&
+                        booking.customerPhone === dto.customerPhone.trim();
+
+                    if (!isValidBookingOwner) {
+                        throw new NotFoundException(
+                            'Không tìm thấy booking hoặc thông tin xác minh không chính xác.',
+                        );
+                    }
+
 
                     if (!booking) {
                         throw new NotFoundException('Không tìm thấy booking.');
@@ -169,7 +196,7 @@ export class PaymentService {
 
     // Nhân viên xác nhận giao dịch lần đầu hoặc giao dịch thanh toán bổ sung.
     async confirmPayment(paymentId: string, confirmedById: string) {
-        return this.prisma.$transaction(async (tx) => {
+        const result = await this.prisma.$transaction(async (tx) => {
             // Lấy ID booking liên kết với giao dịch.
             const initialPayment = await tx.payment.findUnique({
                 where: { id: paymentId },
@@ -201,6 +228,7 @@ export class PaymentService {
                         include: {
                             seats: {
                                 select: {
+                                    id: true,
                                     seatAllocationId: true,
                                 },
                             },
@@ -280,27 +308,66 @@ export class PaymentService {
             if (isInitialPayment) {
                 const allocationIds = booking.seats.map(
                     (seat) => seat.seatAllocationId,
-            );
+                );
 
-            if (allocationIds.length > 0) {
-                const updatedAllocations =
-                await tx.seatAllocation.updateMany({
+                if (allocationIds.length > 0) {
+                    const updatedAllocations =
+                        await tx.seatAllocation.updateMany({
+                            where: {
+                            id: { in: allocationIds },
+                            status: 'HELD',
+                            },
+                            data: {
+                            status: 'BOOKED',
+                            holdExpiresAt: null,
+                            },
+                        })
+                    ;
+
+                    if (updatedAllocations.count !== allocationIds.length) {
+                        throw new ConflictException(
+                            'Không thể xác nhận toàn bộ ghế của booking.',
+                        );
+                    }
+                }
+
+                // Kiểm tra các ghế đã có vé để tránh phát hành vé trùng.
+                const existingTickets = await tx.ticket.findMany({
                     where: {
-                    id: { in: allocationIds },
-                    status: 'HELD',
+                        bookingSeatId: {
+                            in: booking.seats.map((seat) => seat.id),
+                        },
                     },
-                    data: {
-                    status: 'BOOKED',
-                    holdExpiresAt: null,
+                    select: {
+                        bookingSeatId: true,
                     },
                 });
 
-                if (updatedAllocations.count !== allocationIds.length) {
-                throw new ConflictException(
-                    'Không thể xác nhận toàn bộ ghế của booking.',
+                const existingBookingSeatIds = new Set(
+                    existingTickets.map((ticket) => ticket.bookingSeatId),
                 );
+
+                // Chỉ tạo vé cho những ghế chưa được phát hành vé.
+                const ticketsToCreate = booking.seats
+                    .filter((seat) => !existingBookingSeatIds.has(seat.id))
+                    .map((seat) => ({
+                        bookingSeatId: seat.id,
+                        ticketCode: `HD-${randomBytes(8).toString('hex').toUpperCase()}`,
+                        qrToken: randomBytes(32).toString('hex'),
+                    }));
+
+                // Tạo vé cho từng ghế trong booking.
+                if (ticketsToCreate.length > 0) {
+                    const createdTickets = await tx.ticket.createMany({
+                        data: ticketsToCreate,
+                    });
+
+                    if (createdTickets.count !== ticketsToCreate.length) {
+                        throw new ConflictException(
+                            'Không thể phát hành đầy đủ vé cho booking.',
+                        );
+                    }
                 }
-            }
             }
 
             return {
@@ -311,8 +378,164 @@ export class PaymentService {
                 remainingAmount: booking.totalAmount - newPaidAmount,
                 paymentStatus: newPaymentStatus,
                 bookingStatus: BookingStatus.CONFIRMED,
+                isInitialPayment,
             };
-        });
+            });
+
+        // Chỉ tạo thông báo sau khi xác nhận thanh toán và phát hành vé đã commit.
+        if (result.isInitialPayment) {
+            try {
+                const booking = await this.prisma.booking.findUnique({
+                    where: { id: result.bookingId },
+                    select: {
+                        bookingCode: true,
+                        customerName: true,
+                        customerPhone: true,
+                        customerEmail: true,
+
+                        trip: {
+                            select: {
+                                plannedDeparture: true,
+                                route: {
+                                    select: {
+                                        name: true,
+                                    },
+                                },
+                            },
+                        },
+
+                        seats: {
+                            select: {
+                                passengerName: true,
+                                price: true,
+
+                                ticket: {
+                                    select: {
+                                        ticketCode: true,
+                                    },
+                                },
+
+                                seatAllocation: {
+                                    select: {
+                                        tripSeat: {
+                                            select: {
+                                                seat: {
+                                                    select: {
+                                                        code: true,
+                                                    },
+                                                },
+                                            },
+                                        },
+                                    },
+                                },
+
+                                pickupTripRoutePoint: {
+                                    select: {
+                                        pointName: true,
+                                    },
+                                },
+
+                                dropoffTripRoutePoint: {
+                                    select: {
+                                        pointName: true,
+                                    },
+                                },
+                            },
+                        },
+                    },
+                });
+
+                if (booking?.customerPhone) {
+                    const content =
+                        `Hải Định đã xác nhận thanh toán và xuất vé thành công. ` +
+                        `Mã đặt vé: ${booking.bookingCode}. ` +
+                        `Vui lòng truy cập website Hải Định để tra cứu vé.`;
+
+                    // Tạo thông báo SMS, Zalo và Email độc lập, không ảnh hưởng kết quả thanh toán.
+                    const notificationTasks = [
+                        this.notificationService.queueTicketIssuedNotification({
+                            bookingId: result.bookingId,
+                            channel: NotificationChannel.SMS,
+                            recipient: booking.customerPhone,
+                            content,
+                        }),
+
+                        this.notificationService.queueTicketIssuedNotification({
+                            bookingId: result.bookingId,
+                            channel: NotificationChannel.ZALO,
+                            recipient: booking.customerPhone,
+                            content,
+                        }),
+                    ];
+
+                    if (booking.customerEmail) {
+                        // Tạo nội dung chi tiết cho từng vé trong booking.
+                        const ticketDetails = booking.seats.map((seat, index) => {
+                            return [
+                                `VÉ SỐ ${index + 1}`,
+                                `Mã vé: ${seat.ticket?.ticketCode ?? 'Đang cập nhật'}`,
+                                `Hành khách: ${seat.passengerName || booking.customerName}`,
+                                `Ghế: ${seat.seatAllocation?.tripSeat.seat.code ?? 'Đang cập nhật'}`,
+                                `Điểm đón: ${seat.pickupTripRoutePoint?.pointName ?? 'Đang cập nhật'}`,
+                                `Điểm trả: ${seat.dropoffTripRoutePoint?.pointName ?? 'Đang cập nhật'}`,
+                                `Giá vé: ${seat.price.toLocaleString('vi-VN')} VNĐ`,
+                            ].join('\n');
+                        }).join('\n\n');
+
+                        const emailContent =
+                            `Xin chào ${booking.customerName},\n\n` +
+                            `Hải Định đã xác nhận thanh toán và phát hành vé thành công.\n\n` +
+                            `MÃ ĐẶT VÉ: ${booking.bookingCode}\n` +
+                            `Tuyến xe: ${booking.trip.route.name}\n` +
+                            `Khởi hành: ${booking.trip.plannedDeparture.toLocaleString('vi-VN', {
+                                timeZone: 'Asia/Ho_Chi_Minh',
+                            })}\n\n` +
+                            `THÔNG TIN VÉ:\n\n${ticketDetails}\n\n` +
+                            `Cảm ơn quý khách đã sử dụng dịch vụ Hải Định.`
+                        ;
+
+                        notificationTasks.push(
+                            this.notificationService.queueTicketIssuedNotification({
+                                bookingId: result.bookingId,
+                                channel: NotificationChannel.EMAIL,
+                                recipient: booking.customerEmail,
+                                subject: `Xác nhận vé Hải Định - ${booking.bookingCode}`,
+                                content: emailContent,
+                            }),
+                        );
+                    }
+
+                    const notificationResults = await Promise.allSettled(notificationTasks);
+
+                    notificationResults.forEach((notificationResult) => {
+                        if (notificationResult.status === 'rejected') {
+                            this.logger.error(
+                                'Không thể tạo thông báo xuất vé.',
+                                notificationResult.reason,
+                            );
+                        }
+                    });
+
+                    notificationResults.forEach((notificationResult) => {
+                        if (notificationResult.status === 'rejected') {
+                            this.logger.error(
+                                'Không thể tạo thông báo xuất vé.',
+                                notificationResult.reason,
+                            );
+                        }
+                    });
+                }
+            } catch (error) {
+                this.logger.error(
+                    'Lỗi khi tạo thông báo xuất vé.',
+                    error,
+                );
+            }
+        }
+
+        const { isInitialPayment, ...response } = result;
+
+        return response;
     }
 
     // Nhân viên từ chối giao dịch lần đầu hoặc giao dịch thanh toán bổ sung.
@@ -349,7 +572,15 @@ export class PaymentService {
             const payment = await tx.payment.findUnique({
                 where: { id: paymentId },
                 include: {
-                    booking: true,
+                    booking: {
+                        include: {
+                            seats: {
+                                select: {
+                                    seatAllocationId: true,
+                                },
+                            },
+                        },
+                    },
                 },
             });
 
@@ -396,31 +627,80 @@ export class PaymentService {
                 );
             }
 
-            // Nếu từ chối lần đầu, đưa booking về chờ thanh toán lại.
-            // Nếu từ chối thanh toán bổ sung, giữ nguyên booking đã xác nhận.
+            
+            // Nếu từ chối lần đầu, kiểm tra thời hạn giữ ghế trước khi cập nhật Booking.
+            let nextBookingStatus: BookingStatus = BookingStatus.CONFIRMED;
+            let isBookingExpired = false;
+            
+
             if (isInitialPayment) {
-            await tx.booking.update({
-                where: { id: booking.id },
-                data: {
-                    status: BookingStatus.PENDING,
-                    paymentStatus: PaymentStatus.REJECTED,
-                },
-            });
+                const now = new Date();
+
+                isBookingExpired =
+                    !booking.holdExpiresAt ||
+                    booking.holdExpiresAt <= now;
+
+                nextBookingStatus = isBookingExpired
+                    ? BookingStatus.EXPIRED
+                    : BookingStatus.PENDING;
+
+                await tx.booking.update({
+                    where: { id: booking.id },
+                    data: {
+                        status: nextBookingStatus,
+                        paymentStatus: PaymentStatus.REJECTED,
+                        holdExpiresAt: isBookingExpired
+                            ? null
+                            : booking.holdExpiresAt,
+                    },
+                });
+
+                // Giải phóng các ghế HELD nếu Booking đã hết thời hạn giữ chỗ.
+                if (isBookingExpired) {
+                    const allocationIds = booking.seats.map(
+                        (seat) => seat.seatAllocationId,
+                    );
+
+                    if (allocationIds.length > 0) {
+                        const releasedAllocations =
+                            await tx.seatAllocation.updateMany({
+                                where: {
+                                    id: {
+                                        in: allocationIds,
+                                    },
+                                    status: 'HELD',
+                                },
+                                data: {
+                                    status: 'EXPIRED',
+                                    holdExpiresAt: null,
+                                },
+                            });
+
+                        if (releasedAllocations.count !== allocationIds.length) {
+                            throw new ConflictException(
+                                'Không thể giải phóng toàn bộ ghế của Booking đã hết hạn.',
+                            );
+                        }
+                    }
+                }
             }
+
 
             return {
                 message: 'Đã từ chối giao dịch thanh toán.',
                 paymentId,
                 bookingId: booking.id,
                 paymentStatus: PaymentStatus.REJECTED,
-                bookingStatus: isInitialPayment
-                    ? BookingStatus.PENDING
-                    : BookingStatus.CONFIRMED,
+                bookingStatus: nextBookingStatus,
                 bookingPaymentStatus: isInitialPayment
                     ? PaymentStatus.REJECTED
                     : PaymentStatus.PARTIALLY_PAID,
                 rejectionReason: dto.rejectionReason,
-                holdExpiresAt: booking.holdExpiresAt,
+                holdExpiresAt:
+                    isInitialPayment && isBookingExpired
+                        ? null
+                        : booking.holdExpiresAt,
+                isBookingExpired,
             };
         });
     }
