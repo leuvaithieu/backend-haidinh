@@ -14,6 +14,7 @@ import { BookingService } from './booking.service';
 import { CreateBookingDto } from './dto/create-booking.dto';
 import { QueryBookingDto } from './dto/query-booking.dto';
 import { CancelConfirmedBookingDto } from './dto/cancel-confirmed-booking.dto';
+import { QueryBookingsByDateDto } from './dto/query-bookings-by-date.dto';
 
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
@@ -38,6 +39,15 @@ export class BookingController {
             bookingCode,
             customerPhone,
         );
+    }
+
+    // Lấy danh sách chuyến khởi hành trong ngày kèm booking theo từng chiều.
+    // Chỉ ADMIN và STAFF được phép xem.
+    @UseGuards(JwtAuthGuard, RolesGuard)
+    @Roles('ADMIN', 'STAFF')
+    @Get('by-date')
+    findByDate(@Query() query: QueryBookingsByDateDto) {
+        return this.bookingService.findByDate(query);
     }
 
     // Chỉ ADMIN và STAFF được xem chi tiết booking.

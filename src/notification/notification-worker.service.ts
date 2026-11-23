@@ -12,7 +12,7 @@ import { Interval } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationProviderRegistry } from './notification-provider.registry';
 import { NotificationRateLimiterService } from './notification-rate-limiter.service';
-import { QrCodeService } from './qr-code.service';
+import { TicketPdfService } from '../ticket/ticket-pdf.service';
 
 @Injectable()
 export class NotificationWorkerService {
@@ -27,8 +27,8 @@ export class NotificationWorkerService {
     private readonly prisma: PrismaService,
     private readonly providerRegistry: NotificationProviderRegistry,
     private readonly rateLimiter: NotificationRateLimiterService,
-    private readonly qrCodeService: QrCodeService,
-  ) {}
+    private readonly ticketPdfService: TicketPdfService,
+    ) {}
 
   // Khôi phục thông báo bị kẹt ở PROCESSING quá 15 phút.
   @Interval(60_000)
@@ -247,32 +247,21 @@ export class NotificationWorkerService {
       // Chờ đến lượt gửi theo giới hạn tốc độ của từng kênh.
       await this.rateLimiter.waitForSlot(notification.channel);
 
-      // Chỉ tạo ảnh QR khi gửi email thông báo xuất vé.
-      const attachments =
-        notification.channel === NotificationChannel.EMAIL &&
-        notification.type === NotificationType.TICKET_ISSUED
-          ? await Promise.all(
-              notification.booking.seats
-                .filter((seat) => seat.ticket !== null)
-                .map(async (seat) => {
-                  const ticket = seat.ticket!;
-
-                  const cid = `ticket-${ticket.id}@haidinh`;
-
-                  // Tạo ảnh QR từ qrToken đã lưu trong Ticket.
-                  const qrImage = await this.qrCodeService.generateQrCode(
-                    ticket.qrToken,
-                  );
-
-                  return {
-                    filename: `${ticket.ticketCode}.png`,
-                    content: qrImage,
-                    contentType: 'image/png',
-                    cid,
-                  };
-                }),
-            )
-          : [];
+            // Tạo một PDF nhiều trang khi gửi email thông báo xuất vé.
+        const attachments =
+            notification.channel === NotificationChannel.EMAIL &&
+            notification.type === NotificationType.TICKET_ISSUED
+                ? [
+                    {
+                    filename: `${notification.booking.bookingCode}-ve-dien-tu.pdf`,
+                    content: await this.ticketPdfService.generateBookingPdf(
+                        notification.booking.id,
+                    ),
+                    contentType: 'application/pdf',
+                    },
+                ]
+                : []
+            ;
 
       // Gửi thông báo qua nhà cung cấp tương ứng.
       const result = await provider.send({

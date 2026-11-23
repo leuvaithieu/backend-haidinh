@@ -5,6 +5,8 @@ import { NotificationController } from './notification.controller';
 import { NotificationService } from './notification.service';
 import { NotificationWorkerService } from './notification-worker.service';
 
+import { TicketModule } from '../ticket/ticket.module';
+
 import { 
     NotificationProviderRegistry,
     NOTIFICATION_PROVIDERS
@@ -16,32 +18,34 @@ import { QrCodeService } from './qr-code.service';
 
 
 @Module({
-  controllers: [NotificationController],
+    
+    imports: [TicketModule],
+    controllers: [NotificationController],
 
-  providers: [
-    NotificationService,
-    NotificationWorkerService,
+    providers: [
+        NotificationService,
+        NotificationWorkerService,
 
-    NotificationProviderRegistry,
-    NotificationRateLimiterService,
+        NotificationProviderRegistry,
+        NotificationRateLimiterService,
 
-    EmailNotificationProvider,
-    QrCodeService,
+        EmailNotificationProvider,
+        QrCodeService,
 
-    {
-      provide: NOTIFICATION_PROVIDERS,
-      useFactory: (
-        emailProvider: EmailNotificationProvider,
-      ) => [emailProvider],
-      inject: [EmailNotificationProvider],
-    },
-  ],
+        {
+        provide: NOTIFICATION_PROVIDERS,
+        useFactory: (
+            emailProvider: EmailNotificationProvider,
+        ) => [emailProvider],
+        inject: [EmailNotificationProvider],
+        },
+    ],
 
-  exports: [
-    NotificationService,
-    NotificationWorkerService,
-    NotificationProviderRegistry,
-    NotificationRateLimiterService,
-  ],
+    exports: [
+        NotificationService,
+        NotificationWorkerService,
+        NotificationProviderRegistry,
+        NotificationRateLimiterService,
+    ],
 })
 export class NotificationModule {}

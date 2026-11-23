@@ -16,6 +16,7 @@ import { SettingsService } from '../settings/settings.service';
 import { CreateBookingDto } from './dto/create-booking.dto';
 import { QueryBookingDto } from './dto/query-booking.dto';
 import { CancelConfirmedBookingDto } from './dto/cancel-confirmed-booking.dto';
+import { QueryBookingsByDateDto } from './dto/query-bookings-by-date.dto';
 
 import { PricingService } from '../pricing/pricing.service';
 
@@ -837,6 +838,146 @@ export class BookingService {
                 total,
                 totalPages: Math.ceil(total / limit),
             },
+        };
+    }
+
+
+    // Lấy các chuyến khởi hành trong ngày và phân nhóm booking theo chiều đi/về.
+    async findByDate(query: QueryBookingsByDateDto) {
+        // Kiểm tra ngày có đúng định dạng lịch YYYY-MM-DD hay không.
+        const dateCheck = new Date(`${query.date}T00:00:00.000Z`);
+
+        if (
+            Number.isNaN(dateCheck.getTime()) ||
+            dateCheck.toISOString().slice(0, 10) !== query.date
+        ) {
+            throw new BadRequestException('Ngày không hợp lệ');
+        }
+
+        // Tạo khoảng thời gian trong ngày theo múi giờ Việt Nam (UTC+7).
+        const startDate = new Date(`${query.date}T00:00:00+07:00`);
+        const endDate = new Date(
+            startDate.getTime() + 24 * 60 * 60 * 1000,
+        );
+
+        // Lấy các chuyến có ngày khởi hành đi hoặc về nằm trong ngày được chọn.
+        const trips = await this.prisma.trip.findMany({
+            where: {
+                status: {
+                    not: 'CANCELLED',
+                },
+                OR: [
+                    {
+                        plannedDeparture: {
+                            gte: startDate,
+                            lt: endDate,
+                        },
+                    },
+                    {
+                        returnPlannedDeparture: {
+                            gte: startDate,
+                            lt: endDate,
+                        },
+                    },
+                ],
+            },
+            orderBy: {
+                plannedDeparture: 'asc',
+            },
+            include: {
+                route: true,
+                vehicle: true,
+                bookings: {
+                    orderBy: {
+                        createdAt: 'desc',
+                    },
+                    include: {
+                        trip: {
+                            include: {
+                                route: true,
+                                vehicle: true,
+                            },
+                        },
+                        seats: {
+                            include: {
+                                seatAllocation: {
+                                    include: {
+                                        tripSeat: {
+                                            include: {
+                                                seat: true,
+                                            },
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+        });
+
+        // Tạo nhóm riêng cho từng chiều có giờ khởi hành trong ngày.
+        const result = trips.flatMap((trip) => {
+            const groups: Array<{
+                tripId: string;
+                direction: 'OUTBOUND' | 'RETURN';
+                plannedDeparture: Date;
+                trip: typeof trip;
+                bookingCount: number;
+                bookings: typeof trip.bookings;
+            }> = [];
+
+            if (
+                trip.plannedDeparture >= startDate &&
+                trip.plannedDeparture < endDate
+            ) {
+                const bookings = trip.bookings.filter(
+                    (booking) => booking.direction === 'OUTBOUND',
+                );
+
+                groups.push({
+                    tripId: trip.id,
+                    direction: 'OUTBOUND',
+                    plannedDeparture: trip.plannedDeparture,
+                    trip,
+                    bookingCount: bookings.length,
+                    bookings,
+                });
+            }
+
+            if (
+                trip.returnPlannedDeparture &&
+                trip.returnPlannedDeparture >= startDate &&
+                trip.returnPlannedDeparture < endDate
+            ) {
+                const bookings = trip.bookings.filter(
+                    (booking) => booking.direction === 'RETURN',
+                );
+
+                groups.push({
+                    tripId: trip.id,
+                    direction: 'RETURN',
+                    plannedDeparture: trip.returnPlannedDeparture,
+                    trip,
+                    bookingCount: bookings.length,
+                    bookings,
+                });
+            }
+
+            return groups;
+        });
+
+        // Sắp xếp tất cả nhóm theo giờ khởi hành.
+        result.sort(
+            (a, b) =>
+                a.plannedDeparture.getTime() -
+                b.plannedDeparture.getTime(),
+        );
+
+        return {
+            date: query.date,
+            totalTrips: result.length,
+            data: result,
         };
     }
 

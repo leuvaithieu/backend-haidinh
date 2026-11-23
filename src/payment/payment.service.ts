@@ -194,6 +194,7 @@ export class PaymentService {
         
     }
 
+    
     // Nhân viên xác nhận giao dịch lần đầu hoặc giao dịch thanh toán bổ sung.
     async confirmPayment(paymentId: string, confirmedById: string) {
         const result = await this.prisma.$transaction(async (tx) => {
@@ -252,9 +253,13 @@ export class PaymentService {
             const booking = payment.booking;
 
             // Xác định đây là lần xác nhận đầu tiên hay thanh toán bổ sung.
-            const isInitialPayment = booking.status === BookingStatus.PAYMENT_REVIEW && booking.paymentStatus === PaymentStatus.REPORTED;
+            const isInitialPayment =
+                booking.status === BookingStatus.PAYMENT_REVIEW &&
+                booking.paymentStatus === PaymentStatus.REPORTED;
 
-            const isAdditionalPayment = booking.status === BookingStatus.CONFIRMED && booking.paymentStatus === PaymentStatus.PARTIALLY_PAID;
+            const isAdditionalPayment =
+                booking.status === BookingStatus.CONFIRMED &&
+                booking.paymentStatus === PaymentStatus.PARTIALLY_PAID;
 
             if (!isInitialPayment && !isAdditionalPayment) {
                 throw new ConflictException(
@@ -270,9 +275,10 @@ export class PaymentService {
                 );
             }
 
-            const newPaymentStatus = newPaidAmount >= booking.totalAmount
-                ? PaymentStatus.PAID
-                : PaymentStatus.PARTIALLY_PAID;
+            const newPaymentStatus =
+                newPaidAmount >= booking.totalAmount
+                    ? PaymentStatus.PAID
+                    : PaymentStatus.PARTIALLY_PAID;
 
             // Chỉ xác nhận giao dịch nếu nó vẫn đang chờ xử lý.
             const updatedPayment = await tx.payment.updateMany({
@@ -314,15 +320,14 @@ export class PaymentService {
                     const updatedAllocations =
                         await tx.seatAllocation.updateMany({
                             where: {
-                            id: { in: allocationIds },
-                            status: 'HELD',
+                                id: { in: allocationIds },
+                                status: 'HELD',
                             },
                             data: {
-                            status: 'BOOKED',
-                            holdExpiresAt: null,
+                                status: 'BOOKED',
+                                holdExpiresAt: null,
                             },
-                        })
-                    ;
+                        });
 
                     if (updatedAllocations.count !== allocationIds.length) {
                         throw new ConflictException(
@@ -380,9 +385,9 @@ export class PaymentService {
                 bookingStatus: BookingStatus.CONFIRMED,
                 isInitialPayment,
             };
-            });
+        });
 
-        // Chỉ tạo thông báo sau khi xác nhận thanh toán và phát hành vé đã commit.
+        // Chỉ tạo thông báo Email sau khi xác nhận thanh toán và phát hành vé đã commit.
         if (result.isInitialPayment) {
             try {
                 const booking = await this.prisma.booking.findUnique({
@@ -390,7 +395,6 @@ export class PaymentService {
                     select: {
                         bookingCode: true,
                         customerName: true,
-                        customerPhone: true,
                         customerEmail: true,
 
                         trip: {
@@ -445,32 +449,10 @@ export class PaymentService {
                     },
                 });
 
-                if (booking?.customerPhone) {
-                    const content =
-                        `Hải Định đã xác nhận thanh toán và xuất vé thành công. ` +
-                        `Mã đặt vé: ${booking.bookingCode}. ` +
-                        `Vui lòng truy cập website Hải Định để tra cứu vé.`;
-
-                    // Tạo thông báo SMS, Zalo và Email độc lập, không ảnh hưởng kết quả thanh toán.
-                    const notificationTasks = [
-                        this.notificationService.queueTicketIssuedNotification({
-                            bookingId: result.bookingId,
-                            channel: NotificationChannel.SMS,
-                            recipient: booking.customerPhone,
-                            content,
-                        }),
-
-                        this.notificationService.queueTicketIssuedNotification({
-                            bookingId: result.bookingId,
-                            channel: NotificationChannel.ZALO,
-                            recipient: booking.customerPhone,
-                            content,
-                        }),
-                    ];
-
-                    if (booking.customerEmail) {
-                        // Tạo nội dung chi tiết cho từng vé trong booking.
-                        const ticketDetails = booking.seats.map((seat, index) => {
+                if (booking?.customerEmail) {
+                    // Tạo nội dung chi tiết cho từng vé trong booking.
+                    const ticketDetails = booking.seats
+                        .map((seat, index) => {
                             return [
                                 `VÉ SỐ ${index + 1}`,
                                 `Mã vé: ${seat.ticket?.ticketCode ?? 'Đang cập nhật'}`,
@@ -480,54 +462,32 @@ export class PaymentService {
                                 `Điểm trả: ${seat.dropoffTripRoutePoint?.pointName ?? 'Đang cập nhật'}`,
                                 `Giá vé: ${seat.price.toLocaleString('vi-VN')} VNĐ`,
                             ].join('\n');
-                        }).join('\n\n');
+                        })
+                        .join('\n\n');
 
-                        const emailContent =
-                            `Xin chào ${booking.customerName},\n\n` +
-                            `Hải Định đã xác nhận thanh toán và phát hành vé thành công.\n\n` +
-                            `MÃ ĐẶT VÉ: ${booking.bookingCode}\n` +
-                            `Tuyến xe: ${booking.trip.route.name}\n` +
-                            `Khởi hành: ${booking.trip.plannedDeparture.toLocaleString('vi-VN', {
-                                timeZone: 'Asia/Ho_Chi_Minh',
-                            })}\n\n` +
-                            `THÔNG TIN VÉ:\n\n${ticketDetails}\n\n` +
-                            `Cảm ơn quý khách đã sử dụng dịch vụ Hải Định.`
-                        ;
+                    const emailContent =
+                        `Xin chào ${booking.customerName},\n\n` +
+                        `Hải Định đã xác nhận thanh toán và phát hành vé thành công.\n\n` +
+                        `MÃ ĐẶT VÉ: ${booking.bookingCode}\n` +
+                        `Tuyến xe: ${booking.trip.route.name}\n` +
+                        `Khởi hành: ${booking.trip.plannedDeparture.toLocaleString('vi-VN', {
+                            timeZone: 'Asia/Ho_Chi_Minh',
+                        })}\n\n` +
+                        `THÔNG TIN VÉ:\n\n${ticketDetails}\n\n` +
+                        `Cảm ơn quý khách đã sử dụng dịch vụ Hải Định.`;
 
-                        notificationTasks.push(
-                            this.notificationService.queueTicketIssuedNotification({
-                                bookingId: result.bookingId,
-                                channel: NotificationChannel.EMAIL,
-                                recipient: booking.customerEmail,
-                                subject: `Xác nhận vé Hải Định - ${booking.bookingCode}`,
-                                content: emailContent,
-                            }),
-                        );
-                    }
-
-                    const notificationResults = await Promise.allSettled(notificationTasks);
-
-                    notificationResults.forEach((notificationResult) => {
-                        if (notificationResult.status === 'rejected') {
-                            this.logger.error(
-                                'Không thể tạo thông báo xuất vé.',
-                                notificationResult.reason,
-                            );
-                        }
-                    });
-
-                    notificationResults.forEach((notificationResult) => {
-                        if (notificationResult.status === 'rejected') {
-                            this.logger.error(
-                                'Không thể tạo thông báo xuất vé.',
-                                notificationResult.reason,
-                            );
-                        }
+                    // Đưa thông báo Email vào hàng đợi, không ảnh hưởng giao dịch thanh toán.
+                    await this.notificationService.queueTicketIssuedNotification({
+                        bookingId: result.bookingId,
+                        channel: NotificationChannel.EMAIL,
+                        recipient: booking.customerEmail,
+                        subject: `Xác nhận vé Hải Định - ${booking.bookingCode}`,
+                        content: emailContent,
                     });
                 }
             } catch (error) {
                 this.logger.error(
-                    'Lỗi khi tạo thông báo xuất vé.',
+                    'Lỗi khi tạo thông báo Email xuất vé.',
                     error,
                 );
             }
@@ -537,6 +497,7 @@ export class PaymentService {
 
         return response;
     }
+
 
     // Nhân viên từ chối giao dịch lần đầu hoặc giao dịch thanh toán bổ sung.
     async rejectPayment(
