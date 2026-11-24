@@ -1,4 +1,3 @@
-
 import { Test, TestingModule } from '@nestjs/testing';
 import {
     BadRequestException,
@@ -15,6 +14,7 @@ import {
 import { PaymentService } from './payment.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { SettingsService } from '../settings/settings.service';
+import { NotificationService } from '../notification/notification.service';
 
 describe('PaymentService', () => {
     let service: PaymentService;
@@ -40,6 +40,11 @@ describe('PaymentService', () => {
 
     const settingsServiceMock = {
         getNumberValue: jest.fn(),
+        getValue: jest.fn().mockResolvedValue('true'),
+    };
+
+    const notificationServiceMock = {
+        queueTicketIssuedNotification: jest.fn().mockResolvedValue(undefined),
     };
 
     const txMock = {
@@ -57,10 +62,18 @@ describe('PaymentService', () => {
         seatAllocation: {
             updateMany: jest.fn(),
         },
+        ticket: {
+            findMany: jest.fn().mockResolvedValue([]),
+            createMany: jest.fn().mockResolvedValue({ count: 0 }),
+        },
     };
 
     beforeEach(async () => {
         jest.clearAllMocks();
+        txMock.$queryRaw.mockResolvedValue([]);
+        txMock.ticket.findMany.mockResolvedValue([]);
+        txMock.ticket.createMany.mockResolvedValue({ count: 0 });
+        prismaMock.booking.findUnique.mockResolvedValue(null);
 
         // Giả lập Prisma transaction bằng transaction client mock.
         prismaMock.$transaction.mockImplementation(
@@ -79,6 +92,10 @@ describe('PaymentService', () => {
                 {
                     provide: SettingsService,
                     useValue: settingsServiceMock,
+                },
+                {
+                    provide: NotificationService,
+                    useValue: notificationServiceMock,
                 },
             ],
         }).compile();
@@ -102,9 +119,10 @@ describe('PaymentService', () => {
             paymentStatus: PaymentStatus.REPORTED,
             paidAmount: 0,
             totalAmount: 1000000,
+            depositAmount: 300000,
             seats: [
-                { seatAllocationId: 'allocation-1' },
-                { seatAllocationId: 'allocation-2' },
+                { id: 'booking-seat-1', seatAllocationId: 'allocation-1' },
+                { id: 'booking-seat-2', seatAllocationId: 'allocation-2' },
             ],
         };
 
@@ -133,6 +151,7 @@ describe('PaymentService', () => {
             holdExpiresAt: null,
         });
         txMock.seatAllocation.updateMany.mockResolvedValue({ count: 2 });
+        txMock.ticket.createMany.mockResolvedValue({ count: 2 });
 
         const result = await service.confirmPayment(
             paymentId,
@@ -160,8 +179,7 @@ describe('PaymentService', () => {
                 holdExpiresAt: null,
             },
         });
-
-        expect(txMock.seatAllocation.updateMany).toHaveBeenCalledWith({
+                expect(txMock.seatAllocation.updateMany).toHaveBeenCalledWith({
             where: {
                 id: {
                     in: ['allocation-1', 'allocation-2'],
@@ -219,7 +237,7 @@ describe('PaymentService', () => {
 
         txMock.payment.updateMany.mockResolvedValue({ count: 1 });
         txMock.booking.update.mockResolvedValue({});
-        
+
         // Chỉ một trong hai ghế được cập nhật thành công.
         txMock.seatAllocation.updateMany.mockResolvedValue({ count: 1 });
 
@@ -360,8 +378,7 @@ describe('PaymentService', () => {
             bookingStatus: BookingStatus.CONFIRMED,
         });
     });
-
-    // Kiểm tra từ chối thanh toán lần đầu và đưa booking về trạng thái chờ thanh toán lại.
+        // Kiểm tra từ chối thanh toán lần đầu và đưa booking về trạng thái chờ thanh toán lại.
     it('should reject initial payment and return booking to PENDING', async () => {
         const paymentId = 'payment-5';
         const bookingId = 'booking-5';
@@ -413,6 +430,7 @@ describe('PaymentService', () => {
             data: {
                 status: BookingStatus.PENDING,
                 paymentStatus: PaymentStatus.REJECTED,
+                holdExpiresAt,
             },
         });
 
@@ -427,6 +445,7 @@ describe('PaymentService', () => {
             bookingPaymentStatus: PaymentStatus.REJECTED,
             rejectionReason,
             holdExpiresAt,
+            isBookingExpired: false,
         });
     });
 
@@ -491,16 +510,20 @@ describe('PaymentService', () => {
             bookingPaymentStatus: PaymentStatus.PARTIALLY_PAID,
             rejectionReason,
             holdExpiresAt: null,
+            isBookingExpired: false,
         });
     });
-
-    // Kiểm tra khách báo thanh toán lần đầu hợp lệ và booking chuyển sang PAYMENT_REVIEW.
+        // Kiểm tra khách báo thanh toán lần đầu hợp lệ và booking chuyển sang PAYMENT_REVIEW.
     it('should report initial payment and move booking to PAYMENT_REVIEW', async () => {
         const bookingId = 'booking-7';
+        const bookingCode = 'HD-TEST-001';
+        const customerPhone = '0901234567';
         const holdExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
         const booking = {
             id: bookingId,
+            bookingCode,
+            customerPhone,
             status: BookingStatus.PENDING,
             paymentStatus: PaymentStatus.UNPAID,
             totalAmount: 1000000,
@@ -511,6 +534,8 @@ describe('PaymentService', () => {
         };
 
         const dto = {
+            bookingCode,
+            customerPhone,
             amount: 300000,
             transactionCode: 'BANK-TRANSFER-001',
             transferContent: 'THANH TOAN VE HD',
@@ -574,9 +599,13 @@ describe('PaymentService', () => {
     // Kiểm tra không cho khách báo số tiền vượt quá số tiền còn phải thanh toán.
     it('should reject reported payment amount greater than remaining amount', async () => {
         const bookingId = 'booking-8';
+        const bookingCode = 'HD-TEST-001';
+        const customerPhone = '0901234567';
 
         txMock.booking.findUnique.mockResolvedValue({
             id: bookingId,
+            bookingCode,
+            customerPhone,
             status: BookingStatus.PENDING,
             paymentStatus: PaymentStatus.UNPAID,
             totalAmount: 1000000,
@@ -587,6 +616,8 @@ describe('PaymentService', () => {
         });
 
         const dto = {
+            bookingCode,
+            customerPhone,
             amount: 1000001,
             transactionCode: 'BANK-TRANSFER-002',
             transferContent: 'THANH TOAN VE HD',
@@ -607,9 +638,13 @@ describe('PaymentService', () => {
     // Kiểm tra không cho tạo giao dịch mới khi booking đã có giao dịch đang chờ xác nhận.
     it('should reject new payment report when another payment is pending', async () => {
         const bookingId = 'booking-9';
+        const bookingCode = 'HD-TEST-001';
+        const customerPhone = '0901234567';
 
         txMock.booking.findUnique.mockResolvedValue({
             id: bookingId,
+            bookingCode,
+            customerPhone,
             status: BookingStatus.PENDING,
             paymentStatus: PaymentStatus.UNPAID,
             totalAmount: 1000000,
@@ -625,6 +660,8 @@ describe('PaymentService', () => {
         });
 
         const dto = {
+            bookingCode,
+            customerPhone,
             amount: 300000,
             transactionCode: 'BANK-TRANSFER-003',
             transferContent: 'THANH TOAN VE HD',
@@ -641,13 +678,16 @@ describe('PaymentService', () => {
         expect(txMock.payment.create).not.toHaveBeenCalled();
         expect(txMock.booking.update).not.toHaveBeenCalled();
     });
-
-    // Kiểm tra khách báo thanh toán bổ sung khi booking đã CONFIRMED và còn nợ tiền.
+        // Kiểm tra khách báo thanh toán bổ sung khi booking đã CONFIRMED và còn nợ tiền.
     it('should report additional payment without changing booking status', async () => {
         const bookingId = 'booking-10';
+        const bookingCode = 'HD-TEST-001';
+        const customerPhone = '0901234567';
 
         const booking = {
             id: bookingId,
+            bookingCode,
+            customerPhone,
             status: BookingStatus.CONFIRMED,
             paymentStatus: PaymentStatus.PARTIALLY_PAID,
             totalAmount: 1000000,
@@ -658,6 +698,8 @@ describe('PaymentService', () => {
         };
 
         const dto = {
+            bookingCode,
+            customerPhone,
             amount: 500000,
             transactionCode: 'BANK-TRANSFER-004',
             transferContent: 'THANH TOAN PHAN CON LAI',
@@ -702,9 +744,13 @@ describe('PaymentService', () => {
     // Kiểm tra thanh toán lần đầu không đạt mức cọc tối thiểu thì không được ghi nhận.
     it('should reject initial payment below minimum deposit', async () => {
         const bookingId = 'booking-11';
+        const bookingCode = 'HD-TEST-001';
+        const customerPhone = '0901234567';
 
         txMock.booking.findUnique.mockResolvedValue({
             id: bookingId,
+            bookingCode,
+            customerPhone,
             status: BookingStatus.PENDING,
             paymentStatus: PaymentStatus.UNPAID,
             totalAmount: 1000000,
@@ -715,6 +761,8 @@ describe('PaymentService', () => {
         });
 
         const dto = {
+            bookingCode,
+            customerPhone,
             amount: 299999,
             transactionCode: 'BANK-TRANSFER-005',
             transferContent: 'THANH TOAN VE HD',
@@ -739,6 +787,8 @@ describe('PaymentService', () => {
         txMock.booking.findUnique.mockResolvedValue(null);
 
         const dto = {
+            bookingCode: 'HD-TEST-001',
+            customerPhone: '0901234567',
             amount: 300000,
             transactionCode: 'BANK-TRANSFER-006',
             transferContent: 'THANH TOAN VE HD',
@@ -747,7 +797,9 @@ describe('PaymentService', () => {
         await expect(
             service.reportPayment(bookingId, dto),
         ).rejects.toThrow(
-            new NotFoundException('Không tìm thấy booking.'),
+            new NotFoundException(
+                'Không tìm thấy booking hoặc thông tin xác minh không chính xác.',
+            ),
         );
 
         expect(txMock.payment.create).not.toHaveBeenCalled();
@@ -757,9 +809,13 @@ describe('PaymentService', () => {
     // Kiểm tra không cho báo thanh toán lần đầu khi thời hạn giữ ghế đã hết.
     it('should reject initial payment when seat hold has expired', async () => {
         const bookingId = 'booking-12';
+        const bookingCode = 'HD-TEST-001';
+        const customerPhone = '0901234567';
 
         txMock.booking.findUnique.mockResolvedValue({
             id: bookingId,
+            bookingCode,
+            customerPhone,
             status: BookingStatus.PENDING,
             paymentStatus: PaymentStatus.UNPAID,
             totalAmount: 1000000,
@@ -770,6 +826,8 @@ describe('PaymentService', () => {
         });
 
         const dto = {
+            bookingCode,
+            customerPhone,
             amount: 300000,
             transactionCode: 'BANK-TRANSFER-007',
             transferContent: 'THANH TOAN VE HD',
@@ -813,8 +871,7 @@ describe('PaymentService', () => {
             ),
         );
     });
-
-    // Kiểm tra chỉ một nhân viên được xác nhận giao dịch khi có yêu cầu xử lý đồng thời.
+        // Kiểm tra chỉ một nhân viên được xác nhận giao dịch khi có yêu cầu xử lý đồng thời.
     it('should reject confirmation when payment was already processed by another staff', async () => {
         const paymentId = 'payment-14';
         const bookingId = 'booking-14';
@@ -1012,8 +1069,7 @@ describe('PaymentService', () => {
         expect(txMock.booking.update).not.toHaveBeenCalled();
         expect(txMock.seatAllocation.updateMany).not.toHaveBeenCalled();
     });
-
-    // Kiểm tra giao dịch thanh toán lần đầu được đánh dấu quá hạn sau thời gian chờ xác nhận.
+        // Kiểm tra giao dịch thanh toán lần đầu được đánh dấu quá hạn sau thời gian chờ xác nhận.
     it('should mark initial payment as overdue after review timeout', async () => {
         const reportedAt = new Date(Date.now() - 31 * 60 * 1000);
 
@@ -1152,7 +1208,7 @@ describe('PaymentService', () => {
                             tripSeat: {
                                 seat: {
                                     id: 'seat-1',
-                                    code:'A01'
+                                    code: 'A01',
                                 },
                             },
                         },

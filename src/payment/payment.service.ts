@@ -147,14 +147,33 @@ export class PaymentService {
                         );
                     }
 
+                    // Kiểm tra mã giao dịch đã được sử dụng ở booking khác hoặc giao dịch cũ chưa.
+                    const normalizedTransactionCode = dto.transactionCode?.trim();
+                    if (normalizedTransactionCode) {
+                        const duplicateTransactions = await tx.$queryRaw<Array<{ id: string }>>`
+                            SELECT "id"
+                            FROM "Payment"
+                            WHERE "transactionCode" IS NOT NULL
+                              AND BTRIM("transactionCode") <> ''
+                              AND LOWER(BTRIM("transactionCode")) = LOWER(${normalizedTransactionCode})
+                            LIMIT 1
+                        `;
+
+                        if (duplicateTransactions.length > 0) {
+                            throw new ConflictException(
+                                'Mã giao dịch ngân hàng này đã được sử dụng. Vui lòng kiểm tra lại.',
+                            );
+                        }
+                    }
+
                     const payment = await tx.payment.create({
                         data: {
                             bookingId,
                             amount: dto.amount,
                             method: PaymentMethod.BANK_TRANSFER,
                             status: PaymentStatus.REPORTED,
-                            transactionCode: dto.transactionCode,
-                            transferContent: dto.transferContent,
+                            transactionCode: normalizedTransactionCode || null,
+                            transferContent: dto.transferContent?.trim() || null,
                             reportedAt: new Date(),
                         },
                     });
@@ -181,7 +200,15 @@ export class PaymentService {
                 },
             );
         }catch(error){
-            if  (
+            if (
+                error instanceof Prisma.PrismaClientKnownRequestError &&
+                error.code === 'P2002'
+            ) {
+                throw new ConflictException(
+                    'Mã giao dịch ngân hàng này đã được sử dụng. Vui lòng kiểm tra lại.',
+                );
+            }
+            if (
                 error instanceof Prisma.PrismaClientKnownRequestError &&
                 error.code === 'P2034'
             ) {
@@ -268,6 +295,13 @@ export class PaymentService {
             }
 
             const newPaidAmount = booking.paidAmount + payment.amount;
+
+            // Bảo vệ mức cọc tối thiểu ngay tại thời điểm xác nhận giao dịch đầu tiên.
+            if (isInitialPayment && newPaidAmount < booking.depositAmount) {
+                throw new BadRequestException(
+                    `Số tiền thanh toán lần đầu phải tối thiểu ${booking.depositAmount} VND.`,
+                );
+            }
 
             if (newPaidAmount > booking.totalAmount) {
                 throw new BadRequestException(

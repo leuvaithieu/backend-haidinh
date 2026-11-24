@@ -584,7 +584,7 @@ model Payment {
   method PaymentMethod @default(BANK_TRANSFER)
   status PaymentStatus @default(PENDING)
 
-  // Mã giao dịch ngân hàng
+  // Mã giao dịch ngân hàng; tính duy nhất không phân biệt hoa/thường được bảo vệ bằng partial expression index trong migration SQL.
   transactionCode String?
 
   // Nội dung chuyển khoản
@@ -842,8 +842,8 @@ model Refund {
 
   status RefundStatus @default(REQUESTED)
 
-  reason                   String?
-  rejectionReason          String?
+  reason                  String?
+  rejectionReason         String?
   processingFailureReason String?
 
   reviewedById String?

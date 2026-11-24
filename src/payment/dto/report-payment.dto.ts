@@ -1,4 +1,5 @@
 
+import { Transform } from 'class-transformer';
 import {
     IsInt,
     IsOptional,
@@ -28,12 +29,18 @@ export class ReportPaymentDto {
 
     // Mã giao dịch ngân hàng nếu khách có cung cấp.
     @IsOptional()
+    @Transform(({ value }) =>
+        typeof value === 'string' ? value.trim() || undefined : value,
+    )
     @IsString()
     @MaxLength(100)
     transactionCode?: string;
 
     // Nội dung chuyển khoản khách đã sử dụng.
     @IsOptional()
+    @Transform(({ value }) =>
+        typeof value === 'string' ? value.trim() || undefined : value,
+    )
     @IsString()
     @MaxLength(255)
     transferContent?: string;

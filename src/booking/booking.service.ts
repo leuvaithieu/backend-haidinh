@@ -437,9 +437,9 @@ export class BookingService {
                         0,
                     );
 
-                    // Mức cọc áp dụng không vượt quá tổng tiền vé của booking.
+                    // Tính tiền cọc tối thiểu theo số vé trong booking, không vượt tổng tiền vé.
                     const requiredDepositAmount = Math.min(
-                        minDepositAmount,
+                        minDepositAmount * pricedSeats.length,
                         totalAmount,
                     );
                     const booking = await tx.booking.create({
