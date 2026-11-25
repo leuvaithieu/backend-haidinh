@@ -421,12 +421,12 @@ export class TicketPdfService {
                 .fillColor('#222222')
                 .font('Arial')
                 .fontSize(8)
-                .text(`Biển số: ${trip.vehicle.licensePlate}`, {
+                .text(`Biển số: ${trip.vehicle?.licensePlate ?? 'Chưa phân xe'}`, {
                     width: contentWidth,
                     align: 'center',
                 });
 
-            doc.text(`Loại xe: ${trip.vehicle.vehicleType}`, {
+            doc.text(`Loại xe: ${trip.vehicle?.vehicleType ?? 'Chưa phân xe'}`, {
                 width: contentWidth,
                 align: 'center',
             });

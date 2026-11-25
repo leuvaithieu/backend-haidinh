@@ -68,11 +68,15 @@ export class SeatLayoutService {
     // Lưu trữ sơ đồ
     async archive(id: string) {
         const layout = await this.prisma.seatLayout.findUnique({
-        where: { id },
+            where: { id },
         });
 
         if (!layout) {
         throw new NotFoundException('Không tìm thấy sơ đồ ghế');
+        }
+
+        if (layout.isTemplate) {
+            await this.ensureTemplateNotUsedByTrips(id);
         }
 
         return this.prisma.seatLayout.update({
@@ -239,16 +243,20 @@ export class SeatLayoutService {
         });
 
         if (!layout) {
-        throw new NotFoundException('Không tìm thấy sơ đồ ghế');
+            throw new NotFoundException('Không tìm thấy sơ đồ ghế');
+        }
+
+        if (layout.isTemplate) {
+            await this.ensureTemplateNotUsedByTrips(id);
         }
 
         await this.prisma.seatLayout.delete({
-        where: { id },
+            where: { id },
         });
 
         return {
-        message: 'Đã xóa sơ đồ ghế',
-        id,
+            message: 'Đã xóa sơ đồ ghế',
+            id,
         };
     }
 
@@ -256,16 +264,30 @@ export class SeatLayoutService {
     // SEAT: HELPER
     // =========================================
 
+    // Kiểm tra sơ đồ ghế có tồn tại hay không
     private async ensureLayoutExists(layoutId: string) {
         const layout = await this.prisma.seatLayout.findUnique({
-        where: { id: layoutId },
+            where: { id: layoutId },
         });
 
         if (!layout) {
-        throw new NotFoundException('Không tìm thấy sơ đồ ghế');
+            throw new NotFoundException('Không tìm thấy sơ đồ ghế');
         }
 
         return layout;
+    }
+
+    // Kiểm tra sơ đồ mẫu đã được sử dụng để tạo chuyến hay chưa
+    private async ensureTemplateNotUsedByTrips(layoutId: string) {
+    const tripCount = await this.prisma.trip.count({
+        where: { seatLayoutId: layoutId },
+    });
+
+    if (tripCount > 0) {
+        throw new ConflictException(
+        'Sơ đồ mẫu đã được sử dụng cho chuyến xe, không thể chỉnh sửa cấu trúc hoặc xóa',
+        );
+    }
     }
 
     private async ensureSeatExists(
@@ -321,7 +343,10 @@ export class SeatLayoutService {
 
     // POST: Thêm ghế
     async createSeat(layoutId: string, dto: CreateSeatDto) {
-        await this.ensureLayoutExists(layoutId);
+        const layout = await this.ensureLayoutExists(layoutId);
+            if (layout.isTemplate) {
+            await this.ensureTemplateNotUsedByTrips(layoutId);
+        }
 
         try {
         return await this.prisma.seat.create({
@@ -347,22 +372,26 @@ export class SeatLayoutService {
         seatId: string,
         dto: UpdateSeatDto,
     ) {
-        await this.ensureLayoutExists(layoutId);
         await this.ensureSeatExists(layoutId, seatId);
+        const layout = await this.ensureLayoutExists(layoutId);
+
+        if (layout.isTemplate) {
+            await this.ensureTemplateNotUsedByTrips(layoutId);
+        }
 
         try {
-        return await this.prisma.seat.update({
-            where: { id: seatId },
-            data: {
-            code: dto.code,
-            label: dto.label,
-            type: dto.type,
-            level: dto.level,
-            row: dto.row,
-            column: dto.column,
-            isActive: dto.isActive,
-            },
-        });
+            return await this.prisma.seat.update({
+                where: { id: seatId },
+                data: {
+                code: dto.code,
+                label: dto.label,
+                type: dto.type,
+                level: dto.level,
+                row: dto.row,
+                column: dto.column,
+                isActive: dto.isActive,
+                },
+            });
         } catch (error) {
         this.handleSeatError(error);
         }
@@ -370,8 +399,12 @@ export class SeatLayoutService {
 
     // DELETE: Xóa ghế
     async removeSeat(layoutId: string, seatId: string) {
-        await this.ensureLayoutExists(layoutId);
         await this.ensureSeatExists(layoutId, seatId);
+        const layout = await this.ensureLayoutExists(layoutId);
+
+        if (layout.isTemplate) {
+            await this.ensureTemplateNotUsedByTrips(layoutId);
+        }
 
         await this.prisma.seat.delete({
         where: { id: seatId },
@@ -393,26 +426,27 @@ export class SeatLayoutService {
         dto: CopySeatLayoutDto,
     ) {
         const template = await this.prisma.seatLayout.findUnique({
-        where: { id: templateId },
-        include: {
-            seats: true,
-        },
-        });
+            where: { id: templateId },
+                include: {
+                    seats: true,
+                },
+            })
+        ;
 
         if (!template || !template.isTemplate) {
-        throw new NotFoundException('Không tìm thấy sơ đồ mẫu');
+            throw new NotFoundException('Không tìm thấy sơ đồ mẫu');
         }
 
         const vehicle = await this.prisma.vehicle.findUnique({
-        where: { id: dto.vehicleId },
+            where: { id: dto.vehicleId },
         });
 
         if (!vehicle) {
-        throw new NotFoundException('Không tìm thấy xe');
+            throw new NotFoundException('Không tìm thấy xe');
         }
 
         const existingLayout = await this.prisma.seatLayout.findUnique({
-        where: { vehicleId: dto.vehicleId },
+            where: { vehicleId: dto.vehicleId },
         });
 
         if (existingLayout) {
@@ -427,29 +461,29 @@ export class SeatLayoutService {
         }
 
         return this.prisma.$transaction(async (tx) => {
-        const newLayout = await tx.seatLayout.create({
-            data: {
-            name: dto.name ?? `${template.name} - ${vehicle.name}`,
-            description: template.description,
-            status: 'DRAFT',
-            isTemplate: false,
-            vehicleId: vehicle.id,
-            copiedFromId: template.id,
-            },
-        });
+            const newLayout = await tx.seatLayout.create({
+                data: {
+                name: dto.name ?? `${template.name} - ${vehicle.name}`,
+                description: template.description,
+                status: 'DRAFT',
+                isTemplate: false,
+                vehicleId: vehicle.id,
+                copiedFromId: template.id,
+                },
+            });
 
-        if (template.seats.length > 0) {
-            await tx.seat.createMany({
-            data: template.seats.map((seat) => ({
-                layoutId: newLayout.id,
-                code: seat.code,
-                label: seat.label,
-                type: seat.type,
-                level: seat.level,
-                row: seat.row,
-                column: seat.column,
-                isActive: seat.isActive,
-            })),
+            if (template.seats.length > 0) {
+                await tx.seat.createMany({
+                data: template.seats.map((seat) => ({
+                    layoutId: newLayout.id,
+                    code: seat.code,
+                    label: seat.label,
+                    type: seat.type,
+                    level: seat.level,
+                    row: seat.row,
+                    column: seat.column,
+                    isActive: seat.isActive,
+                })),
             });
         }
 

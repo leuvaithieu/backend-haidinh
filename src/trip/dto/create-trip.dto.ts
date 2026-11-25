@@ -4,12 +4,9 @@ import {
     IsNotEmpty,
     IsOptional,
     IsDateString,
-    IsArray,
     IsEnum,
-    ValidateNested,
     Matches,
 } from 'class-validator';
-import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { RouteScheduleType } from '@prisma/client';
 
@@ -36,30 +33,54 @@ export class CreateTripDto {
     @IsNotEmpty()
     routeId!: string;
 
-    @ApiProperty({ example: 'cm123vehicle', description: 'ID xe' })
+    @ApiProperty({
+        example: 'cm123layout',
+        description: 'ID sơ đồ ghế mẫu',
+    })
     @IsString()
     @IsNotEmpty()
-    vehicleId!: string;
+    seatLayoutId!: string;
 
-    @ApiProperty({ example: 'cm123driver1', description: 'ID lái xe 1' })
+    @ApiPropertyOptional({
+        example: 'cm123vehicle',
+        description: 'ID xe, có thể phân công sau',
+        nullable: true,
+    })
+    @IsOptional()
     @IsString()
-    @IsNotEmpty()
-    driver1Id!: string;
+    vehicleId?: string | null;
 
-    @ApiProperty({ example: 'cm123driver2', description: 'ID lái xe 2' })
+    @ApiPropertyOptional({
+        example: 'cm123driver1',
+        description: 'ID lái xe 1, có thể phân công sau',
+        nullable: true,
+    })
+    @IsOptional()
     @IsString()
-    @IsNotEmpty()
-    driver2Id!: string;
+    driver1Id?: string | null;
 
-    @ApiProperty({ example: 'cm123assistant1', description: 'ID phụ xe 1' })
+    @ApiPropertyOptional({
+        example: 'cm123driver2',
+        description: 'ID lái xe 2, có thể phân công sau',
+        nullable: true,
+    })
+    @IsOptional()
     @IsString()
-    @IsNotEmpty()
-    assistant1Id!: string;
+    driver2Id?: string | null;
+
+    @ApiPropertyOptional({
+        example: 'cm123assistant1',
+        description: 'ID phụ xe 1, có thể phân công sau',
+        nullable: true,
+    })
+    @IsOptional()
+    @IsString()
+    assistant1Id?: string | null;
 
     @ApiPropertyOptional({
         example: 'cm123assistant2',
-        description: 'ID phụ xe 2, không bắt buộc với chuyến ngắn và ngày tết',
-        nullable:true,
+        description: 'ID phụ xe 2, có thể phân công sau',
+        nullable: true,
     })
     @IsOptional()
     @IsString()

@@ -67,13 +67,9 @@ export class BookingService {
                             id: dto.tripId,
                         },
                         include: {
-                            vehicle: {
+                            seatLayout: {
                                 include: {
-                                    seatLayout: {
-                                        include: {
-                                            seats: true,
-                                        },
-                                    },
+                                    seats: true,
                                 },
                             },
                         },
@@ -92,7 +88,7 @@ export class BookingService {
                     }
 
                     // 2. Kiểm tra sơ đồ ghế của xe.
-                    const layout = trip.vehicle.seatLayout;
+                    const layout = trip.seatLayout;
 
                     if (
                         !layout ||

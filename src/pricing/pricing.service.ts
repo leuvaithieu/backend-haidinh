@@ -922,6 +922,12 @@ export class PricingService {
             priceOverrides: true,
         } satisfies Prisma.RoutePricePolicyInclude;
 
+        if (!trip.vehicle) {
+            throw new BadRequestException(
+                'Chuyến xe chưa được phân công xe',
+            );
+        }
+
         // Ưu tiên chính sách dành riêng cho loại xe của chuyến.
         const exactPolicies =
         await db.routePricePolicy.findMany({
