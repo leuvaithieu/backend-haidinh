@@ -424,6 +424,10 @@ model SeatLayout {
   id          String           @id @default(cuid())
   name        String
   description String?
+
+  // Loại xe áp dụng cho sơ đồ mẫu, dùng để xác định chính sách giá.
+  vehicleType String?
+
   status      SeatLayoutStatus @default(DRAFT)
 
   // true: sơ đồ mẫu; false: sơ đồ của xe thực tế
@@ -687,6 +691,9 @@ model RoutePricePolicy {
 
   bookingSeats BookingSeat[]
 
+  // Danh sách giá Tết theo từng ngày.
+  tetDailyPrices TetDailyPrice[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -695,8 +702,28 @@ model RoutePricePolicy {
   @@index([routeId, pricingMode, direction, version])
 }
 
-//Giá theo RoutePoint
+// Giá vé Tết theo từng ngày trong một chính sách và loại xe.
+model TetDailyPrice {
+  id String @id @default(cuid())
 
+  policyId String
+  policy   RoutePricePolicy @relation(fields: [policyId], references: [id], onDelete: Cascade)
+
+  // Ngày khởi hành áp dụng giá.
+  departureDate DateTime @db.Date
+
+  // Giá vé toàn tuyến của ngày đó.
+  price Int
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Một chính sách chỉ có một mức giá cho mỗi ngày.
+  @@unique([policyId, departureDate])
+  @@index([departureDate])
+}
+
+//Giá theo RoutePoint
 model RoutePointPrice {
   id String @id @default(cuid())
 

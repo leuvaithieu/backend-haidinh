@@ -7,11 +7,14 @@ import {
   Patch,
   Post,
   UseGuards,
+  Query
 } from '@nestjs/common';
 
 import { PricingService } from './pricing.service';
 import { CreatePricingPolicyDto } from './dto/create-pricing-policy.dto';
 import { UpdatePricingPolicyDto } from './dto/update-pricing-policy.dto';
+
+import { TripDirection } from '@prisma/client';
 
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
@@ -36,6 +39,31 @@ export class PricingController {
   @Roles('ADMIN', 'STAFF')
   async findAll() {
     return this.pricingService.findAll();
+  }
+
+    // Tính giá vé theo chuyến, chiều chạy và hai điểm đón trả.
+  @Get('quote')
+  @Roles('ADMIN', 'STAFF')
+  async quote(
+    @Query('tripId') tripId: string,
+    @Query('direction') direction: TripDirection,
+    @Query('pickupTripRoutePointId')
+    pickupTripRoutePointId: string,
+    @Query('dropoffTripRoutePointId')
+    dropoffTripRoutePointId: string,
+    @Query('pickupServicePointId')
+    pickupServicePointId?: string,
+    @Query('dropoffServicePointId')
+    dropoffServicePointId?: string,
+  ) {
+    return this.pricingService.calculatePrice({
+      tripId,
+      direction,
+      pickupTripRoutePointId,
+      dropoffTripRoutePointId,
+      pickupServicePointId,
+      dropoffServicePointId,
+    });
   }
 
   // Lấy chi tiết một chính sách giá dành cho ADMIN và STAFF.

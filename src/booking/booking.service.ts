@@ -92,8 +92,7 @@ export class BookingService {
 
                     if (
                         !layout ||
-                        layout.status !== 'ACTIVE' ||
-                        layout.isTemplate
+                        layout.status !== 'ACTIVE' 
                     ) {
                         throw new BadRequestException(
                             'Xe chưa có sơ đồ ghế đang hoạt động',

@@ -1,3 +1,4 @@
+
 import {
   IsArray,
   IsDateString,
@@ -83,6 +84,16 @@ export class CreateRoutePriceOverrideDto {
   price?: number | null;
 }
 
+// DTO khai báo giá vé Tết theo từng ngày khởi hành.
+export class CreateTetDailyPriceDto {
+  @IsDateString()
+  departureDate!: string;
+
+  @IsInt()
+  @Min(1)
+  price!: number;
+}
+
 // DTO tạo chính sách giá cho một tuyến vận hành.
 export class CreatePricingPolicyDto {
   @IsString()
@@ -139,4 +150,11 @@ export class CreatePricingPolicyDto {
   @ValidateNested({ each: true })
   @Type(() => CreateRoutePriceOverrideDto)
   priceOverrides?: CreateRoutePriceOverrideDto[];
+
+  // Danh sách giá Tết theo từng ngày khởi hành.
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CreateTetDailyPriceDto)
+  tetDailyPrices?: CreateTetDailyPriceDto[];
 }

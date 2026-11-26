@@ -14,6 +14,7 @@ import {
 import { PaymentService } from './payment.service';
 import { ReportPaymentDto } from './dto/report-payment.dto';
 import { RejectPaymentDto } from './dto/reject-payment.dto';
+import { ConfirmBookingPaymentDto } from './dto/confirm-booking-payment.dto';
 
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
@@ -96,6 +97,22 @@ export class PaymentController {
     @Roles('ADMIN', 'STAFF')
     async findReportedPayments() {
         return this.paymentService.findReportedPayments();
+    }
+
+    // Quản trị viên xác nhận tổng số tiền thực tế đã nhận cho booking.
+    @Patch('bookings/:bookingId/confirm-total')
+    @UseGuards(JwtAuthGuard, RolesGuard)
+    @Roles('ADMIN')
+    async confirmBookingPayment(
+        @Param('bookingId') bookingId: string,
+        @Body() dto: ConfirmBookingPaymentDto,
+        @CurrentUser() user: { userId: string },
+    ) {
+        return this.paymentService.confirmBookingPayment(
+            bookingId,
+            dto,
+            user.userId,
+        );
     }
 
     // Lấy chi tiết giao dịch thanh toán dành cho nhân viên quản lý.
