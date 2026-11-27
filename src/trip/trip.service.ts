@@ -1700,15 +1700,22 @@ export class TripService {
             const hasBookingData =
                 bookingCount > 0 || seatAllocationCount > 0;
 
+            // Chỉ cho phép gán xe lần đầu khi chuyến đã có booking.
+            // Không cho đổi xe đã phân công, đổi sơ đồ hoặc lịch trình khi đã có dữ liệu đặt vé.
+            const isReplacingAssignedVehicle =
+                isVehicleChanged && currentTrip.vehicleId !== null;
+
             if (
                 hasBookingData &&
-                (isVehicleChanged ||
+                (
+                    isReplacingAssignedVehicle ||
                     isSeatLayoutChanged ||
                     shouldUpdateOutbound ||
-                    shouldUpdateReturn)
+                    shouldUpdateReturn
+                )
             ) {
                 throw new BadRequestException(
-                    'Không thể thay đổi xe, sơ đồ ghế hoặc lịch trình vì chuyến đã phát sinh dữ liệu đặt vé!',
+                    'Không thể thay đổi xe đã phân công, sơ đồ ghế hoặc lịch trình vì chuyến đã phát sinh dữ liệu đặt vé!',
                 );
             }
 

@@ -858,9 +858,12 @@ describe('PaymentService', () => {
         prismaMock.$transaction.mockRejectedValue(prismaError);
 
         const dto = {
+            bookingCode: 'HD-TEST-001',
+            customerPhone: '0901234567',
             amount: 300000,
             transactionCode: 'BANK-TRANSFER-008',
             transferContent: 'THANH TOAN VE HD',
+            
         };
 
         await expect(
@@ -1262,7 +1265,7 @@ describe('PaymentService', () => {
 
         expect(result).toBe(paymentDetails);
         expect(result.booking.trip.route.id).toBe('route-1');
-        expect(result.booking.trip.vehicle.id).toBe('vehicle-1');
+        expect(result.booking.trip.vehicle?.id).toBe('vehicle-1');
         expect(result.booking.seats[0].seatAllocation.tripSeat.seat.code)
             .toBe('A01');
     });

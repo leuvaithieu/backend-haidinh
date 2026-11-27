@@ -3,6 +3,7 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { PrismaModule } from './prisma/prisma.module';
+import { ThrottlerModule } from '@nestjs/throttler';
 import { CustomerModule } from './customer/customer.module';
 import { RouteModule } from './route/route.module';
 import { RoutePointModule } from './route-point/route-point.module';
@@ -56,6 +57,16 @@ import { ConfigModule } from '@nestjs/config';
     TicketModule,
     RefundModule,
     NotificationModule,
+    ConfigModule.forRoot({
+      isGlobal: true,
+    }),
+    ThrottlerModule.forRoot([
+      {
+        // Giới hạn mặc định: 3 lượt trong 15 phút.
+        ttl: 15 * 60 * 1000,
+        limit: 3,
+      },
+    ]),
   ],
   controllers: [AppController],
   providers: [AppService],

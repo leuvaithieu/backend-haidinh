@@ -10,6 +10,8 @@ import {
     UseGuards,
     Req
 } from '@nestjs/common';
+import { ThrottlerGuard } from '@nestjs/throttler';
+
 import { BookingService } from './booking.service';
 import { CreateBookingDto } from './dto/create-booking.dto';
 import { QueryBookingDto } from './dto/query-booking.dto';
@@ -24,9 +26,30 @@ import { Roles } from '../auth/roles.decorator';
 export class BookingController {
     constructor(private readonly bookingService: BookingService) {}
 
+    // Tạo booking trực tuyến và ghi nhận IP của khách đặt vé.
+    @UseGuards(ThrottlerGuard)
     @Post()
-    create(@Body() dto: CreateBookingDto) {
-        return this.bookingService.create(dto);
+    create(
+        @Body() dto: CreateBookingDto,
+        @Req() req: any,
+    ) {
+        return this.bookingService.create(
+            dto,
+            'ONLINE',
+            req.ip,
+        );
+    }
+
+    // Tạo booking nội bộ cho nhân viên bán vé tại văn phòng.
+    @UseGuards(JwtAuthGuard, RolesGuard)
+    @Roles('ADMIN', 'STAFF')
+    @Post('admin')
+    createAdminBooking(@Body() dto: CreateBookingDto) {
+        return this.bookingService.create(
+            dto,
+            'ADMIN',
+            null,
+        );
     }
 
     // Tra cứu booking công khai bằng mã đặt vé và số điện thoại người đặt.

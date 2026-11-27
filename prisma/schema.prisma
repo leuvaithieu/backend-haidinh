@@ -486,6 +486,12 @@ model Booking {
 
   bookingCode String @unique
 
+  // Phân biệt booking do khách online hay nhân viên tạo.
+  source String @default("ONLINE")
+
+  // IP của người tạo booking online, dùng để kiểm soát spam.
+  createdByIp String?
+
   customerId String?
   customer   Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
 
@@ -528,6 +534,7 @@ model Booking {
   @@index([tripId, status])
   @@index([customerPhone])
   @@index([holdExpiresAt])
+  @@index([createdByIp, createdAt])
 }
 
 model BookingSeat {

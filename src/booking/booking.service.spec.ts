@@ -59,19 +59,17 @@ describe('BookingService', () => {
                     id: 'trip-01',
                     status: 'SCHEDULED',
                     ticketPrice: 500000,
-                    vehicle: {
-                        seatLayout: {
-                            id: 'layout-01',
-                            status: 'ACTIVE',
-                            isTemplate: false,
-                            seats: [
-                                {
-                                    id: 'seat-01',
-                                    code: 'A01',
-                                    isActive: true,
-                                },
-                            ],
-                        },
+                    seatLayout: {
+                        id: 'layout-01',
+                        status: 'ACTIVE',
+                        isTemplate: false,
+                        seats: [
+                            {
+                                id: 'seat-01',
+                                code: 'A01',
+                                isActive: true,
+                            },
+                        ],
                     },
                 }),
             },
@@ -122,8 +120,18 @@ describe('BookingService', () => {
             },
 
             booking: {
-                findMany: jest.fn().mockResolvedValue([]),
-                create: jest.fn().mockResolvedValue({
+                    findUnique: jest.fn().mockResolvedValue({
+                        id: 'booking-01',
+                        status: 'PENDING',
+                        paymentStatus: 'UNPAID',
+                        holdExpiresAt: new Date(Date.now() - 1000),
+                        seats: [
+                            { seatAllocationId: 'allocation-01' },
+                            { seatAllocationId: 'allocation-02' },
+                        ],
+                    }),
+                    findMany: jest.fn().mockResolvedValue([]),
+                    create: jest.fn().mockResolvedValue({
                     id: 'booking-01',
                     bookingCode: 'HD-TEST-001',
                     tripId: 'trip-01',
@@ -192,10 +200,9 @@ describe('BookingService', () => {
                     {
                         provide: SettingsService,
                         useValue: {
-                            getNumberValue: jest
-                                .fn()
-                                .mockResolvedValueOnce(20)
-                                .mockResolvedValueOnce(300000),
+                            getValue: jest.fn().mockResolvedValue('true'),
+                            getNumberValue: jest.fn().mockResolvedValue(20),
+                            getRequiredNumberValue: jest.fn().mockResolvedValue(300000),
                         },
                     },
                 ],
@@ -427,18 +434,16 @@ describe('BookingService', () => {
             id: 'trip-01',
             status: 'SCHEDULED',
             ticketPrice: 500000,
-            vehicle: {
-                seatLayout: {
-                    id: 'layout-01',
-                    status: 'ACTIVE',
-                    isTemplate: false,
-                    seats: [
-                        { id: 'seat-01', code: 'A01', isActive: true },
-                        { id: 'seat-02', code: 'A02', isActive: true },
-                    ],
-                },
+            seatLayout: {
+                id: 'layout-01',
+                status: 'ACTIVE',
+                isTemplate: false,
+                seats: [
+                    { id: 'seat-01', code: 'A01', isActive: true },
+                    { id: 'seat-02', code: 'A02', isActive: true },
+                ],
             },
-        });
+    });
 
         // Giả lập hai ghế tương ứng trong chuyến.
         tx.tripSeat.findMany.mockResolvedValue([

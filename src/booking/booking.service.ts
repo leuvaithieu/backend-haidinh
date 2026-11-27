@@ -29,15 +29,28 @@ export class BookingService {
     ) {}
 
     // Tạo booking và giữ ghế theo từng đoạn đường trong một transaction.
-    async create(dto: CreateBookingDto) {
-        // Kiểm tra hệ thống có đang cho phép khách đặt vé trực tuyến hay không.
-        const onlineBookingEnabled =
-            await this.settingsService.getValue('ONLINE_BOOKING_ENABLED');
+    async create(
+        dto: CreateBookingDto,
+        source: 'ONLINE' | 'ADMIN' = 'ONLINE',
+        createdByIp: string | null = null,
+    ) {
 
-        if (onlineBookingEnabled === 'false') {
-            throw new ForbiddenException(
-                'Hiện tại Hải Định tạm ngừng nhận đặt vé trực tuyến. Vui lòng liên hệ nhân viên.',
+       // Giới hạn tối đa 5 ghế mỗi booking chỉ áp dụng cho khách đặt vé online.
+        if (source === 'ONLINE' && (dto?.seats?.length ?? 0) > 5) {
+            throw new BadRequestException(
+                'Mỗi lần đặt vé trực tuyến chỉ được chọn tối đa 5 ghế.',
             );
+        }
+        // Chỉ kiểm tra trạng thái mở đặt vé đối với booking trực tuyến.
+        if (source === 'ONLINE') {
+            const onlineBookingEnabled =
+                await this.settingsService.getValue('ONLINE_BOOKING_ENABLED');
+
+            if (onlineBookingEnabled === 'false') {
+                throw new ForbiddenException(
+                    'Hiện tại Hải Định tạm ngừng nhận đặt vé trực tuyến. Vui lòng liên hệ nhân viên.',
+                );
+            }
         }
 
         const now = new Date();
@@ -426,6 +439,50 @@ export class BookingService {
                             .toUpperCase()}`
                     ;
 
+                    // Giới hạn tổng số ghế đang giữ của một số điện thoại trên cùng chuyến và chiều.
+                    if (source === 'ONLINE') {
+                        const activeBookings = await tx.booking.findMany({
+                            where: {
+                                tripId: trip.id,
+                                direction: dto.direction,
+                                customerPhone: dto.customerPhone.trim(),
+                                source: 'ONLINE',
+                                OR: [
+                                    {
+                                        status: 'PENDING',
+                                        holdExpiresAt: {
+                                            gt: now,
+                                        },
+                                    },
+                                    {
+                                        status: 'PAYMENT_REVIEW',
+                                    },
+                                ],
+                            },
+                            select: {
+                                _count: {
+                                    select: {
+                                        seats: true,
+                                    },
+                                },
+                            },
+                        });
+
+                        const currentlyHeldSeats = activeBookings.reduce(
+                            (total, booking) =>
+                                total + booking._count.seats,
+                            0,
+                        );
+
+                        if (
+                            currentlyHeldSeats + dto.seats.length > 5
+                        ) {
+                            throw new BadRequestException(
+                                'Số điện thoại này đang giữ tối đa 5 ghế trên chuyến xe này. Vui lòng hoàn tất hoặc chờ booking trước hết hạn.',
+                            );
+                        }
+                    }
+
                     // Tính tổng tiền booking từ giá vé riêng của từng ghế.
                     const totalAmount = pricedSeats.reduce(
                         (total, item) => total + item.price,
@@ -437,9 +494,12 @@ export class BookingService {
                         minDepositAmount * pricedSeats.length,
                         totalAmount,
                     );
+
                     const booking = await tx.booking.create({
                         data: {
                             bookingCode,
+                            source,
+                            createdByIp: source === 'ONLINE' ? createdByIp : null,
                             tripId: trip.id,
                             customerId: dto.customerId,
                             customerName: dto.customerName,
